@@ -1,5 +1,7 @@
 // mraga voice processor. Holds a pool of KS voices so rings overlap (spec §7).
-// Messages: { type: "pluck", freq, velocity, glideFromFreq } round-robin a voice.
+// Messages:
+//   { type: "pluck", freq, velocity, glideFromFreq } — round-robin a voice
+//   { type: "preset", params: {brightness,damping,decay,jawari} } — set the active voice flavour
 class MragaVoiceProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
@@ -17,6 +19,10 @@ class MragaVoiceProcessor extends AudioWorkletProcessor {
         // could spike before the gain envelope pulls it down.
         const vel = Math.max(0, Math.min(1, m.velocity));
         v.pluck(m.freq, vel, m.glideFromFreq);
+      } else if (m.type === "preset" && m.params) {
+        // Select-one: apply the flavour to all pooled voices so currently
+        // ringing and future plucks share the active timbre.
+        for (const v of this.voices) v.setParams(m.params);
       }
     };
   }
