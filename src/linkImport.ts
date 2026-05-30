@@ -17,11 +17,11 @@ function pitchToFreq(root: string, octave: number): number {
   return 440 * Math.pow(2, semitonesFromA4 / 12);
 }
 
-export const DEFAULT_TUNING: PortableTuning = {
+export const DEFAULT_TUNING: PortableTuning = Object.freeze({
   tonicHz: pitchToFreq("C", 4),
   scaleCents: getBuiltinDegrees("equal").slice(0, 12),
   label: "C · Equal (12-TET)",
-};
+});
 
 function isValidDegrees(d: unknown): d is number[] {
   return (

@@ -37,6 +37,8 @@ describe("restingNotes", () => {
     expect(r[7]).toBeGreaterThan(0); // fifth
     expect(r[1]).toBe(0); // m2 is not a resting note
     expect(r[0]).toBeGreaterThanOrEqual(r[7]); // tonic at least as strong as fifth
+    expect(r[0]).toBeCloseTo(1.0, 5); // spec §4.3: tonic strength
+    expect(r[7]).toBeCloseTo(0.8, 5); // spec §4.3: fifth strength
   });
 });
 
@@ -44,5 +46,13 @@ describe("hzToNearestStepPos", () => {
   it("maps a frequency back to the closest lattice step", () => {
     const sp = hzToNearestStepPos(tonicHz * 2, equal, tonicHz); // octave up
     expect(stepPosToDegree(sp, equal.length)).toEqual({ degreeIndex: 0, octave: 1 });
+  });
+  it("throws on non-positive hz", () => {
+    expect(() => hzToNearestStepPos(0, equal, tonicHz)).toThrow();
+    expect(() => hzToNearestStepPos(-5, equal, tonicHz)).toThrow();
+  });
+  it("maps a frequency a fifth above the tonic to degree 7 octave 0", () => {
+    const sp = hzToNearestStepPos(tonicHz * Math.pow(2, 700 / 1200), equal, tonicHz);
+    expect(stepPosToDegree(sp, equal.length)).toEqual({ degreeIndex: 7, octave: 0 });
   });
 });

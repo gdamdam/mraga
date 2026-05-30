@@ -8,6 +8,9 @@ export function degreeToHz(
   degreeIndex: number,
   octave: number,
 ): number {
+  if (degreeIndex < 0 || degreeIndex >= scaleCents.length) {
+    throw new RangeError(`degreeToHz: degreeIndex ${degreeIndex} out of range [0, ${scaleCents.length})`);
+  }
   const cents = scaleCents[degreeIndex] + 1200 * octave;
   return tonicHz * Math.pow(2, cents / 1200);
 }
@@ -26,6 +29,7 @@ export function stepPosToDegree(
 }
 
 export function hzToNearestStepPos(hz: number, scaleCents: number[], tonicHz: number): number {
+  if (hz <= 0) throw new RangeError("hzToNearestStepPos: hz must be positive");
   const cents = 1200 * Math.log2(hz / tonicHz);
   const scaleLen = scaleCents.length;
   let best = 0;
