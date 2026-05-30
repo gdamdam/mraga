@@ -1,0 +1,9 @@
+{
+  "name": "mraga",
+  "short_name": "mraga",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#efe6d4",
+  "theme_color": "#c0572b",
+  "icons": []
+}

@@ -1,0 +1,7 @@
+node_modules
+dist
+test-results
+playwright-report
+src/engine/voiceProcessor.js
+tsconfig.tsbuildinfo
+.claude/
