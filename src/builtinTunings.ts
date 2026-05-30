@@ -37,6 +37,8 @@ export const BUILTIN_TUNINGS: Record<string, BuiltinTuning> = {
   },
 };
 
+// Returns 13 degrees [0..1200]; callers must drop the final octave when
+// building a PortableTuning.scaleCents (length 12).
 export function getBuiltinDegrees(id: string | null | undefined): number[] {
   if (id && BUILTIN_TUNINGS[id]) return BUILTIN_TUNINGS[id].degrees;
   return BUILTIN_TUNINGS.equal.degrees;

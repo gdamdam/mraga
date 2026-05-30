@@ -57,11 +57,12 @@ export function extractPayloadFromUrl(
   return null;
 }
 
-export async function decodePayload(
-  payload: string,
-  compressed: boolean,
-): Promise<unknown> {
+export async function decodePayload(payload: string, compressed: boolean): Promise<unknown> {
   let bytes = urlSafeB64ToBytes(payload);
-  if (compressed) bytes = await inflate(bytes);
-  return JSON.parse(new TextDecoder().decode(bytes));
+  if (compressed) {
+    try { bytes = await inflate(bytes); }
+    catch { throw new Error("mraga: failed to decompress share payload"); }
+  }
+  try { return JSON.parse(new TextDecoder().decode(bytes)); }
+  catch { throw new Error("mraga: share payload is not valid JSON"); }
 }

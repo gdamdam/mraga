@@ -22,6 +22,13 @@ describe("makeRng", () => {
   it("different seeds diverge", () => {
     expect(makeRng(1)()).not.toEqual(makeRng(2)());
   });
+
+  it("seed=0 produces valid output in [0,1)", () => {
+    const r = makeRng(0);
+    const v = r();
+    expect(v).toBeGreaterThanOrEqual(0);
+    expect(v).toBeLessThan(1);
+  });
 });
 
 describe("gaussian", () => {
@@ -30,6 +37,6 @@ describe("gaussian", () => {
     let sum = 0;
     const n = 5000;
     for (let i = 0; i < n; i++) sum += gaussian(r);
-    expect(Math.abs(sum / n)).toBeLessThan(0.1);
+    expect(Math.abs(sum / n)).toBeLessThan(0.05);
   });
 });
