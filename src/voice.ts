@@ -1,10 +1,12 @@
 // src/voice.ts
 import workletUrl from "./engine/voiceProcessor.js?url";
+import type { KSParams } from "./voicePresets";
 
 export type Voice = {
   ctx: AudioContext;
   resume: () => Promise<void>;
   pluck: (freq: number, velocity: number, glideFromFreq?: number) => void;
+  setPreset: (params: KSParams) => void;
   dispose: () => void;
 };
 
@@ -41,6 +43,7 @@ export async function createVoice(): Promise<Voice> {
     resume: () => ctx.resume(),
     pluck: (freq, velocity, glideFromFreq) =>
       node.port.postMessage({ type: "pluck", freq, velocity, glideFromFreq }),
+    setPreset: (params) => node.port.postMessage({ type: "preset", params }),
     dispose: () => void ctx.close(),
   };
 }
