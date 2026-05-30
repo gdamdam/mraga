@@ -51,4 +51,46 @@ describe("Scheduler", () => {
     now += 1; sched.tick();
     expect(count).toBe(after);
   });
+
+  it("quantizes note onsets to the grid, strictly increasing (monotonic guard)", () => {
+    let now = 0;
+    const grid = 0.25;
+    const q = (t: number) => Math.ceil(t / grid - 1e-9) * grid;
+    const fired: number[] = [];
+    const sched = new Scheduler({
+      now: () => now,
+      lookaheadSec: 0.1,
+      // notes every 0.1s (denser than the grid → forces collisions)
+      pull: () => ({ kind: "note", pitchHz: 220, velocity: 0.7, ioiSec: 0.1, durationHint: 1, degreeIndex: 0, octave: 0 }),
+      onNote: (_e, time) => fired.push(time),
+      onRest: () => {},
+      quantize: q,
+    });
+    sched.start();
+    for (let i = 0; i < 60; i++) { now += 0.025; sched.tick(); }
+    expect(fired.length).toBeGreaterThan(3);
+    for (const t of fired) expect(Math.abs(t / grid - Math.round(t / grid))).toBeLessThan(1e-6); // on a grid line
+    for (let i = 1; i < fired.length; i++) expect(fired[i]).toBeGreaterThan(fired[i - 1]); // strictly increasing
+  });
+
+  it("the quantize hook does not change how many events are pulled (raw timeline unaffected)", () => {
+    const makeOpts = (quantize?: (t: number) => number) => {
+      let count = 0;
+      let now = 0;
+      const sched = new Scheduler({
+        now: () => now,
+        lookaheadSec: 0.1,
+        pull: () => ({ kind: "note", pitchHz: 220, velocity: 0.7, ioiSec: 0.13, durationHint: 1, degreeIndex: 0, octave: 0 }),
+        onNote: () => { count++; },
+        onRest: () => {},
+        quantize,
+      });
+      sched.start();
+      for (let i = 0; i < 40; i++) { now += 0.025; sched.tick(); }
+      return count;
+    };
+    const free = makeOpts(undefined);
+    const quantized = makeOpts((t) => Math.ceil(t / 0.25 - 1e-9) * 0.25);
+    expect(quantized).toBe(free);
+  });
 });

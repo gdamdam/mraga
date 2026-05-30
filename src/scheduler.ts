@@ -2,6 +2,11 @@
 // Web Audio lookahead scheduler (the standard "a-tale-of-two-clocks" pattern).
 // tick() is called on a ~25ms timer; it schedules every event whose time falls
 // within the lookahead window, advancing a running nextTime cursor.
+//
+// Optional `quantize` hook: when Ableton Link is engaged, note ONSETS are
+// snapped to a beat grid via quantize(rawTime), while the raw timeline still
+// advances by each event's ioiSec (so the engine's density/breathing is
+// preserved). A monotonic guard keeps onsets strictly increasing.
 import type { EngineEvent, NoteEvent, RestEvent } from "./engine";
 
 export type SchedulerOpts = {
@@ -10,11 +15,13 @@ export type SchedulerOpts = {
   pull: () => EngineEvent;       // next event from the engine
   onNote: (e: NoteEvent, time: number) => void;
   onRest: (e: RestEvent, time: number) => void;
+  quantize?: (rawTime: number) => number; // optional onset grid-snap
 };
 
 export class Scheduler {
   private running = false;
   private nextTime = 0;
+  private lastOnset = -Infinity;
   private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor(private opts: SchedulerOpts) {}
@@ -22,6 +29,7 @@ export class Scheduler {
   start() {
     this.running = true;
     this.nextTime = this.opts.now();
+    this.lastOnset = -Infinity;
   }
 
   // Drives scheduling from a real timer (browser). Tests call tick() directly.
@@ -38,8 +46,18 @@ export class Scheduler {
     let guard = 0;
     while (this.nextTime < horizon && guard++ < 1000) {
       const e = this.opts.pull();
-      if (e.kind === "note") this.opts.onNote(e, this.nextTime);
-      else this.opts.onRest(e, this.nextTime);
+      if (e.kind === "note") {
+        let onset = this.opts.quantize ? this.opts.quantize(this.nextTime) : this.nextTime;
+        // Monotonic guard: never schedule at/before the previous onset. When
+        // quantizing, push to the next grid line; otherwise nudge forward.
+        if (onset <= this.lastOnset) {
+          onset = this.opts.quantize ? this.opts.quantize(this.lastOnset + 1e-6) : this.lastOnset + 1e-6;
+        }
+        this.lastOnset = onset;
+        this.opts.onNote(e, onset);
+      } else {
+        this.opts.onRest(e, this.nextTime);
+      }
       this.nextTime += Math.max(0.001, e.ioiSec);
     }
   }
