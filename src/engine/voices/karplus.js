@@ -12,7 +12,11 @@ class MragaVoiceProcessor extends AudioWorkletProcessor {
       if (m.type === "pluck") {
         const v = this.voices[this.rr];
         this.rr = (this.rr + 1) % this.voices.length;
-        v.pluck(m.freq, m.velocity, m.glideFromFreq);
+        // Clamp velocity at the audio boundary: the KS loop filter is only
+        // conditionally stable (DC gain slightly >1), so a stray velocity >1
+        // could spike before the gain envelope pulls it down.
+        const vel = Math.max(0, Math.min(1, m.velocity));
+        v.pluck(m.freq, vel, m.glideFromFreq);
       }
     };
   }
