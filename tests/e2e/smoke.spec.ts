@@ -1,14 +1,15 @@
 import { test, expect } from "@playwright/test";
+import { encodeScene } from "../../src/shareCodec";
 
 test("loads, imports an mdrone link, and toggles play", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "mraga" })).toBeVisible();
 
-  // Build a real ?b= mdrone link for a D / maqam-rast scene.
+  // Build a real mdrone link for a D / maqam-rast scene using mraga's own codec
+  // (the plain ?b= form), so the test exercises the exact decoder the app uses.
   const scene = { version: 1, name: "e2e", drone: { root: "D", octave: 4, tuningId: "maqam-rast" } };
-  const json = Buffer.from(JSON.stringify(scene), "utf8");
-  const b64 = json.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  const link = `https://app.mdrone.org/?b=${b64}`;
+  const { key, value } = await encodeScene(scene, { compress: false });
+  const link = `https://app.mdrone.org/?${key}=${value}`;
 
   await page.getByLabel("mdrone link").fill(link);
   await page.getByLabel("mdrone link").blur();
