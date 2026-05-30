@@ -111,3 +111,30 @@ describe("phrases breathe", () => {
     expect(rests.some((r) => r.phraseEnd)).toBe(true);
   });
 });
+
+describe("phrases resolve onto resting notes", () => {
+  it("the note before a phrase-end rest is usually a resting degree", () => {
+    const p = knobsToParams({ density: 0.7, register: 0.5, restlessness: 0.3, silence: 0.5 }, tonicHz);
+    const restingStrength = [0, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100]
+      .map((c) => {
+        // tonic(0), fourth(~500), fifth(~700) are resting in equal temperament within tolerance
+        return c === 0 || Math.abs(c - 498) <= 35 || Math.abs(c - 702) <= 35 || Math.abs(c - 386) <= 35 ? 1 : 0;
+      });
+    const rng = makeRng(77);
+    let state = initState();
+    let prevNote: any = null;
+    let restingEndings = 0;
+    let totalEndings = 0;
+    for (let i = 0; i < 1500; i++) {
+      const r = nextEvent(state, scale, tonicHz, p, rng);
+      if (r.event.kind === "rest" && (r.event as any).phraseEnd && prevNote) {
+        totalEndings++;
+        if (restingStrength[prevNote.degreeIndex] > 0) restingEndings++;
+      }
+      if (r.event.kind === "note") prevNote = r.event;
+      state = r.state;
+    }
+    expect(totalEndings).toBeGreaterThan(5);
+    expect(restingEndings / totalEndings).toBeGreaterThan(0.5);
+  });
+});
