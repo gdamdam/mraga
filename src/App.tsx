@@ -138,7 +138,7 @@ export function App() {
           onChange={(e) => setLinkInput(e.target.value)}
           onBlur={loadLink}
         />
-        <button className="play" onClick={togglePlay}>{playing ? "■ STOP" : "▶ PLAY"}</button>
+        <button type="button" className="play" onClick={togglePlay}>{playing ? "■ STOP" : "▶ PLAY"}</button>
       </div>
 
       <PitchLadder scaleCents={tuning.scaleCents} activeDegree={activeDegree} />
@@ -152,6 +152,7 @@ export function App() {
 
       <div className="row chip">
         <button
+          type="button"
           onClick={cycleVoice}
           aria-label="voice"
           style={{ background: "none", border: "none", color: "inherit", font: "inherit", cursor: "pointer", padding: 0 }}
@@ -159,6 +160,7 @@ export function App() {
           VOICE {VOICE_LABELS[voiceId]}
         </button>
         <button
+          type="button"
           onClick={toggleLink}
           aria-label="timing mode"
           style={{ background: "none", border: "none", color: "inherit", font: "inherit", cursor: "pointer", padding: 0 }}
