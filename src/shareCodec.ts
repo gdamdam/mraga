@@ -22,7 +22,7 @@ export function urlSafeB64ToBytes(s: string): Uint8Array {
 async function deflate(bytes: Uint8Array): Promise<Uint8Array> {
   const cs = new CompressionStream("deflate");
   const blob = await new Response(
-    new Response(bytes).body!.pipeThrough(cs),
+    new Response(bytes as unknown as BodyInit).body!.pipeThrough(cs),
   ).arrayBuffer();
   return new Uint8Array(blob);
 }
@@ -30,7 +30,7 @@ async function deflate(bytes: Uint8Array): Promise<Uint8Array> {
 async function inflate(bytes: Uint8Array): Promise<Uint8Array> {
   const ds = new DecompressionStream("deflate");
   const blob = await new Response(
-    new Response(bytes).body!.pipeThrough(ds),
+    new Response(bytes as unknown as BodyInit).body!.pipeThrough(ds),
   ).arrayBuffer();
   return new Uint8Array(blob);
 }
