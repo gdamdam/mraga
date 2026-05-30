@@ -17,6 +17,10 @@ export class LinkClock {
 
   // beat: the Link beat position as of audioNow (AudioContext.currentTime).
   update(tempo: number, beat: number, audioNow: number): void {
+    // Guard the invariant: a non-positive/NaN tempo would make timeAtBeat
+    // divide by zero and silently corrupt the model. The bridge never sends
+    // one, but the type permits it.
+    if (!(tempo > 0)) return;
     this.tempo = tempo;
     this.beatRef = beat;
     this.timeRef = audioNow;
