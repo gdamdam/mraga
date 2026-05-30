@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Knob } from "./components/Knob";
 import { PitchLadder } from "./components/PitchLadder";
 import { importTuningFromUrl, DEFAULT_TUNING, type PortableTuning } from "./linkImport";
@@ -7,6 +7,17 @@ import { initState, nextEvent, type EngineState } from "./engine";
 import { makeRng } from "./rng";
 import { Scheduler } from "./scheduler";
 import { createVoice, type Voice } from "./voice";
+import { VOICE_IDS, VOICE_LABELS, getPreset, type VoiceId } from "./voicePresets";
+import { LinkClock } from "./linkClock";
+import { enableLinkBridge, autoDetectLinkBridge, onLinkState, type LinkState } from "./engine/linkBridge";
+
+const VOICE_KEY = "mraga-voice";
+const LINK_KEY = "mraga-link-enabled";
+
+function loadVoiceId(): VoiceId {
+  const stored = localStorage.getItem(VOICE_KEY);
+  return (VOICE_IDS as string[]).includes(stored ?? "") ? (stored as VoiceId) : "santoor";
+}
 
 export function App() {
   const [tuning, setTuning] = useState<PortableTuning>(DEFAULT_TUNING);
@@ -14,6 +25,11 @@ export function App() {
   const [playing, setPlaying] = useState(false);
   const [activeDegree, setActiveDegree] = useState<number | null>(null);
   const [knobs, setKnobs] = useState<Knobs>({ density: 0.5, register: 0.5, restlessness: 0.4, silence: 0.4 });
+  const [voiceId, setVoiceId] = useState<VoiceId>(loadVoiceId);
+  const [linkEnabled, setLinkEnabled] = useState<boolean>(() => localStorage.getItem(LINK_KEY) === "1");
+  const [linkState, setLinkState] = useState<LinkState>({
+    tempo: 120, beat: 0, phase: 0, playing: false, peers: 0, clients: 0, connected: false,
+  });
 
   const voiceRef = useRef<Voice | null>(null);
   const schedRef = useRef<Scheduler | null>(null);
@@ -21,11 +37,47 @@ export function App() {
   const rngRef = useRef<() => number>(makeRng(Date.now() & 0xffff));
   const knobsRef = useRef(knobs);
   const tuningRef = useRef(tuning);
+  const clockRef = useRef(new LinkClock());
+  // Link is "active" (quantizing) only when enabled AND connected.
+  const linkActiveRef = useRef(false);
   knobsRef.current = knobs;
   tuningRef.current = tuning;
+  linkActiveRef.current = linkEnabled && linkState.connected;
+
+  // Subscribe to the bridge once; feed the clock and mirror state into React.
+  useEffect(() => {
+    const unsub = onLinkState((s) => {
+      if (s.connected) {
+        const now = voiceRef.current ? voiceRef.current.ctx.currentTime : 0;
+        clockRef.current.update(s.tempo, s.beat, now);
+      } else {
+        clockRef.current.reset();
+      }
+      setLinkState(s);
+    });
+    // On load: persistent connect if the user previously enabled it, else a
+    // silent one-shot auto-detect (mirrors mdrone).
+    if (localStorage.getItem(LINK_KEY) === "1") enableLinkBridge(true);
+    else autoDetectLinkBridge();
+    return unsub;
+  }, []);
 
   async function loadLink() {
     setTuning(await importTuningFromUrl(linkInput));
+  }
+
+  function cycleVoice() {
+    const next = VOICE_IDS[(VOICE_IDS.indexOf(voiceId) + 1) % VOICE_IDS.length];
+    setVoiceId(next);
+    localStorage.setItem(VOICE_KEY, next);
+    voiceRef.current?.setPreset(getPreset(next));
+  }
+
+  function toggleLink() {
+    const next = !linkEnabled;
+    setLinkEnabled(next);
+    localStorage.setItem(LINK_KEY, next ? "1" : "0");
+    enableLinkBridge(next);
   }
 
   async function togglePlay() {
@@ -37,6 +89,7 @@ export function App() {
     }
     if (!voiceRef.current) voiceRef.current = await createVoice();
     await voiceRef.current.resume();
+    voiceRef.current.setPreset(getPreset(voiceId));
     stateRef.current = initState();
     const sched = new Scheduler({
       now: () => voiceRef.current!.ctx.currentTime,
@@ -53,11 +106,21 @@ export function App() {
         setTimeout(() => setActiveDegree(e.degreeIndex), delayMs);
       },
       onRest: () => {},
+      // Snap onsets to the half-beat grid only while Link is engaged+connected;
+      // identity otherwise, so free timing is unchanged.
+      quantize: (rawTime) =>
+        linkActiveRef.current ? clockRef.current.nextGridTime(rawTime, 0.5) : rawTime,
     });
     schedRef.current = sched;
     sched.run(25);
     setPlaying(true);
   }
+
+  const linkLabel = !linkEnabled
+    ? "● free  ○ link"
+    : linkState.connected
+      ? `○ free  ● link · ${linkState.tempo.toFixed(1)} BPM · ${linkState.peers} peer${linkState.peers === 1 ? "" : "s"}`
+      : "○ free  ● link — searching…";
 
   return (
     <main className="mraga">
@@ -88,8 +151,20 @@ export function App() {
       </div>
 
       <div className="row chip">
-        <span>VOICE santoor</span>
-        <span>TIMING ● free ○ link (soon)</span>
+        <button
+          onClick={cycleVoice}
+          aria-label="voice"
+          style={{ background: "none", border: "none", color: "inherit", font: "inherit", cursor: "pointer", padding: 0 }}
+        >
+          VOICE {VOICE_LABELS[voiceId]}
+        </button>
+        <button
+          onClick={toggleLink}
+          aria-label="timing mode"
+          style={{ background: "none", border: "none", color: "inherit", font: "inherit", cursor: "pointer", padding: 0 }}
+        >
+          TIMING {linkLabel}
+        </button>
       </div>
     </main>
   );
