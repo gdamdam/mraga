@@ -47,10 +47,13 @@ export function App() {
   // Subscribe to the bridge once; feed the clock and mirror state into React.
   useEffect(() => {
     const unsub = onLinkState((s) => {
-      if (s.connected) {
-        const now = voiceRef.current ? voiceRef.current.ctx.currentTime : 0;
-        clockRef.current.update(s.tempo, s.beat, now);
-      } else {
+      // Only feed the clock model once audio exists, so beat positions are
+      // always timestamped with a real AudioContext time (never 0). The 20 Hz
+      // stream re-seeds the model right after PLAY; quantize is identity until
+      // the clock is valid + linkActiveRef is set, so this can't misfire.
+      if (s.connected && voiceRef.current) {
+        clockRef.current.update(s.tempo, s.beat, voiceRef.current.ctx.currentTime);
+      } else if (!s.connected) {
         clockRef.current.reset();
       }
       setLinkState(s);
@@ -125,7 +128,10 @@ export function App() {
   return (
     <main className="mraga">
       <div className="row">
-        <h1 style={{ margin: 0, letterSpacing: 2 }}>mraga</h1>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+          <h1 style={{ margin: 0, letterSpacing: 2 }}>mraga</h1>
+          <span className="chip">v{__APP_VERSION__}</span>
+        </div>
         <span className="chip">◈ linked: {tuning.label}</span>
       </div>
 
