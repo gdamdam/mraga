@@ -12,18 +12,18 @@ describe("hzToMidi", () => {
     expect(r.bend).toBe(8192);
   });
 
-  it("+50 cents bends up by a quarter of the +2-semitone range", () => {
-    const hz = 440 * Math.pow(2, 0.5 / 12); // A4 + 50 cents
+  it("+40 cents stays on the note and bends up", () => {
+    const hz = 440 * Math.pow(2, 0.4 / 12); // A4 + 40 cents (unambiguous nearest note)
     const r = hzToMidi(hz);
     expect(r.note).toBe(69);
-    expect(r.bend).toBe(8192 + 2048); // 50/200 * 8192
+    expect(r.bend).toBe(8192 + Math.round((40 / 200) * 8192));
   });
 
-  it("-50 cents bends down symmetrically", () => {
-    const hz = 440 * Math.pow(2, -0.5 / 12);
+  it("-40 cents bends down symmetrically", () => {
+    const hz = 440 * Math.pow(2, -0.4 / 12);
     const r = hzToMidi(hz);
     expect(r.note).toBe(69);
-    expect(r.bend).toBe(8192 - 2048);
+    expect(r.bend).toBe(8192 - Math.round((40 / 200) * 8192));
   });
 
   it("bend stays within 14-bit range", () => {
