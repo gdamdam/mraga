@@ -9,16 +9,31 @@ import { Scheduler } from "./scheduler";
 import { createVoice, type Voice } from "./voice";
 import { VOICE_IDS, VOICE_LABELS, getPreset, type VoiceId } from "./voicePresets";
 import { LinkClock } from "./linkClock";
-import { enableLinkBridge, autoDetectLinkBridge, onLinkState, type LinkState } from "./engine/linkBridge";
+import { enableLinkBridge, onLinkState, type LinkState } from "./engine/linkBridge";
+
+// Block-art wordmark in mdrone's style (rendered with the .title-art glow).
+const LOGO = "█▀▄▀█ █▀█ █▀█ █▀▀ █▀█\n█ ▀ █ █▀▄ █▀█ █▄█ █▀█";
 
 const VOICE_KEY = "mraga-voice";
-const LINK_KEY = "mraga-link-enabled";
+const TIMING_KEY = "mraga-timing";
+const BPM_KEY = "mraga-bpm";
 const VOL_KEY = "mraga-volume";
 const OCT_KEY = "mraga-octave";
+
+type TimingMode = "free" | "bpm" | "link";
+const TIMING_MODES: TimingMode[] = ["free", "bpm", "link"];
 
 function loadVoiceId(): VoiceId {
   const stored = localStorage.getItem(VOICE_KEY);
   return (VOICE_IDS as string[]).includes(stored ?? "") ? (stored as VoiceId) : "santoor";
+}
+function loadTiming(): TimingMode {
+  const stored = localStorage.getItem(TIMING_KEY);
+  return (TIMING_MODES as string[]).includes(stored ?? "") ? (stored as TimingMode) : "free";
+}
+function loadBpm(): number {
+  const v = parseFloat(localStorage.getItem(BPM_KEY) ?? "");
+  return Number.isFinite(v) ? Math.max(40, Math.min(240, v)) : 80;
 }
 function loadVolume(): number {
   const v = parseFloat(localStorage.getItem(VOL_KEY) ?? "");
@@ -38,7 +53,8 @@ export function App() {
   const [voiceId, setVoiceId] = useState<VoiceId>(loadVoiceId);
   const [volume, setVolume] = useState<number>(loadVolume);
   const [octaveShift, setOctaveShift] = useState<number>(loadOctave);
-  const [linkEnabled, setLinkEnabled] = useState<boolean>(() => localStorage.getItem(LINK_KEY) === "1");
+  const [timingMode, setTimingMode] = useState<TimingMode>(loadTiming);
+  const [bpm, setBpm] = useState<number>(loadBpm);
   const [linkState, setLinkState] = useState<LinkState>({
     tempo: 120, beat: 0, phase: 0, playing: false, peers: 0, clients: 0, connected: false,
   });
@@ -49,28 +65,37 @@ export function App() {
   const rngRef = useRef<() => number>(makeRng(Date.now() & 0xffff));
   const knobsRef = useRef(knobs);
   const tuningRef = useRef(tuning);
-  const clockRef = useRef(new LinkClock());
+  const linkClockRef = useRef(new LinkClock());      // fed by the Ableton bridge
+  const internalClockRef = useRef(new LinkClock());  // self-driven at `bpm`
   const linkActiveRef = useRef(false);
+  const timingModeRef = useRef(timingMode);
+  const bpmRef = useRef(bpm);
   const octaveShiftRef = useRef(octaveShift);
   knobsRef.current = knobs;
   tuningRef.current = tuning;
-  linkActiveRef.current = linkEnabled && linkState.connected;
+  linkActiveRef.current = timingMode === "link" && linkState.connected;
+  timingModeRef.current = timingMode;
+  bpmRef.current = bpm;
   octaveShiftRef.current = octaveShift;
 
-  // Subscribe to the bridge once; feed the clock and mirror state into React.
+  // Seed the internal BPM grid from the current audio clock (no-op before audio).
+  function seedInternalClock() {
+    if (voiceRef.current) {
+      internalClockRef.current.update(bpmRef.current, 0, voiceRef.current.ctx.currentTime);
+    }
+  }
+
+  // Subscribe to the bridge once; feed the link clock and mirror state into React.
   useEffect(() => {
     const unsub = onLinkState((s) => {
-      // Only feed the clock once audio exists, so beats are timestamped with a
-      // real AudioContext time. The 20 Hz stream re-seeds it right after PLAY.
       if (s.connected && voiceRef.current) {
-        clockRef.current.update(s.tempo, s.beat, voiceRef.current.ctx.currentTime);
+        linkClockRef.current.update(s.tempo, s.beat, voiceRef.current.ctx.currentTime);
       } else if (!s.connected) {
-        clockRef.current.reset();
+        linkClockRef.current.reset();
       }
       setLinkState(s);
     });
-    if (localStorage.getItem(LINK_KEY) === "1") enableLinkBridge(true);
-    else autoDetectLinkBridge();
+    enableLinkBridge(loadTiming() === "link");
     return unsub;
   }, []);
 
@@ -78,11 +103,10 @@ export function App() {
     setTuning(await importTuningFromUrl(linkInput));
   }
 
-  function cycleVoice() {
-    const next = VOICE_IDS[(VOICE_IDS.indexOf(voiceId) + 1) % VOICE_IDS.length];
-    setVoiceId(next);
-    localStorage.setItem(VOICE_KEY, next);
-    voiceRef.current?.setPreset(getPreset(next));
+  function selectVoice(id: VoiceId) {
+    setVoiceId(id);
+    localStorage.setItem(VOICE_KEY, id);
+    voiceRef.current?.setPreset(getPreset(id));
   }
 
   function changeVolume(v: number) {
@@ -97,11 +121,20 @@ export function App() {
     localStorage.setItem(OCT_KEY, String(next));
   }
 
-  function toggleLink() {
-    const next = !linkEnabled;
-    setLinkEnabled(next);
-    localStorage.setItem(LINK_KEY, next ? "1" : "0");
-    enableLinkBridge(next);
+  function changeBpm(v: number) {
+    const next = Math.max(40, Math.min(240, v));
+    setBpm(next);
+    bpmRef.current = next;
+    localStorage.setItem(BPM_KEY, String(next));
+    seedInternalClock(); // re-anchor the internal grid to the new tempo
+  }
+
+  function changeTiming(mode: TimingMode) {
+    setTimingMode(mode);
+    timingModeRef.current = mode;
+    localStorage.setItem(TIMING_KEY, mode);
+    enableLinkBridge(mode === "link");
+    if (mode === "bpm") seedInternalClock();
   }
 
   async function togglePlay() {
@@ -115,6 +148,7 @@ export function App() {
     await voiceRef.current.resume();
     voiceRef.current.setPreset(getPreset(voiceId));
     voiceRef.current.setVolume(volume);
+    seedInternalClock();
     stateRef.current = initState();
     const sched = new Scheduler({
       now: () => voiceRef.current!.ctx.currentTime,
@@ -133,9 +167,13 @@ export function App() {
         setTimeout(() => setActiveDegree(e.degreeIndex), delayMs);
       },
       onRest: () => {},
-      // Snap onsets to the half-beat grid only while Link is engaged+connected.
-      quantize: (rawTime) =>
-        linkActiveRef.current ? clockRef.current.nextGridTime(rawTime, 0.5) : rawTime,
+      // Onset grid: Ableton bridge when linked+connected; else the internal BPM
+      // grid when timing="bpm"; else free (identity).
+      quantize: (rawTime) => {
+        if (linkActiveRef.current) return linkClockRef.current.nextGridTime(rawTime, 0.5);
+        if (timingModeRef.current === "bpm") return internalClockRef.current.nextGridTime(rawTime, 0.5);
+        return rawTime;
+      },
     });
     schedRef.current = sched;
     sched.run(25);
@@ -143,17 +181,15 @@ export function App() {
   }
 
   const octLabel = octaveShift > 0 ? `+${octaveShift}` : String(octaveShift);
-  const linkLabel = !linkEnabled
-    ? "● free  ○ link"
-    : linkState.connected
-      ? `○ free  ● link · ${linkState.tempo.toFixed(1)} BPM · ${linkState.peers} peer${linkState.peers === 1 ? "" : "s"}`
-      : "○ free  ● link — searching…";
+  const linkStatus = linkState.connected
+    ? `${linkState.tempo.toFixed(1)} BPM · ${linkState.peers} peer${linkState.peers === 1 ? "" : "s"}`
+    : "searching…";
 
   return (
     <main className="mraga">
       <div className="row">
-        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-          <h1 style={{ margin: 0, letterSpacing: 2 }}>mraga</h1>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <h1 className="title-art" aria-label="mraga">{LOGO}</h1>
           <span className="chip" title="mraga version">v{__APP_VERSION__}</span>
         </div>
         <span
@@ -189,15 +225,14 @@ export function App() {
       </div>
 
       <div className="row footer chip">
-        <button
-          type="button"
-          className="chip-btn"
-          onClick={cycleVoice}
-          aria-label="voice"
-          title="Click to cycle the voice flavour: santoor, koto, sitar, mallet, qanun, kalimba."
-        >
-          VOICE {VOICE_LABELS[voiceId]}
-        </button>
+        <label className="sel" title="Voice flavour — the struck/plucked timbre.">
+          VOICE
+          <select value={voiceId} aria-label="voice" onChange={(e) => selectVoice(e.target.value as VoiceId)}>
+            {VOICE_IDS.map((id) => (
+              <option key={id} value={id}>{VOICE_LABELS[id]}</option>
+            ))}
+          </select>
+        </label>
 
         <span className="oct" title="Shift the whole voice up or down by whole octaves (−2 to +2).">
           OCT
@@ -208,26 +243,23 @@ export function App() {
 
         <span className="vol" title="Master output volume.">
           VOL
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={volume}
-            aria-label="volume"
-            onChange={(e) => changeVolume(parseFloat(e.target.value))}
-          />
+          <input type="range" min={0} max={1} step={0.01} value={volume} aria-label="volume" onChange={(e) => changeVolume(parseFloat(e.target.value))} />
         </span>
 
-        <button
-          type="button"
-          className="chip-btn"
-          onClick={toggleLink}
-          aria-label="timing mode"
-          title="Free timing, or lock note onsets to Ableton Link's ½-beat grid (needs the mpump Link Bridge running)."
-        >
-          TIMING {linkLabel}
-        </button>
+        <span className="bpm" title="Tempo for the internal BPM grid (used when TIMING = bpm; overridden by Ableton Link).">
+          BPM
+          <input type="number" min={40} max={240} step={1} value={bpm} aria-label="bpm" onChange={(e) => changeBpm(parseFloat(e.target.value))} />
+        </span>
+
+        <label className="sel" title="Timing: free (ametric) · bpm (snap onsets to the internal grid) · link (snap to Ableton Link via the mpump Link Bridge).">
+          TIMING
+          <select value={timingMode} aria-label="timing mode" onChange={(e) => changeTiming(e.target.value as TimingMode)}>
+            <option value="free">free</option>
+            <option value="bpm">bpm grid</option>
+            <option value="link">ableton link</option>
+          </select>
+          {timingMode === "link" && <span style={{ marginLeft: 6 }}>· {linkStatus}</span>}
+        </label>
       </div>
     </main>
   );

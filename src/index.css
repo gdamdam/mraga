@@ -4,13 +4,27 @@
   --ember: #c0572b;
   --muted: #8a7a64;
   --line: #cabfa8;
+  --field: #fff8ec;
   font-family: ui-sans-serif, system-ui, sans-serif;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--ink); }
 .mraga { max-width: 760px; margin: 0 auto; padding: 24px; }
-/* Wordmark in the m-family monospace, matching mdrone's logo. */
-.mraga h1 { font-family: "SF Mono", "Menlo", "Consolas", monospace; font-weight: 700; }
+/* Block-art wordmark in the m-family style, matching mdrone's glowing logo. */
+.title-art {
+  margin: 0;
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  font-size: 10px;
+  line-height: 1.15;
+  font-weight: 700;
+  letter-spacing: 0;
+  white-space: pre;
+  color: var(--ember);
+  text-shadow:
+    0 0 1px color-mix(in srgb, var(--ember) 80%, transparent),
+    0 0 8px color-mix(in srgb, var(--ember) 32%, transparent),
+    0 0 16px color-mix(in srgb, var(--ember) 14%, transparent);
+}
 .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .chip { font-size: 13px; color: var(--muted); }
 /* A chip rendered as a clickable control (voice/timing/octave). */
@@ -20,7 +34,7 @@ body { margin: 0; background: var(--bg); color: var(--ink); }
 .knob { text-align: center; }
 .knob input { width: 100%; accent-color: var(--ember); }
 .play { background: var(--ember); color: #fff; border: 0; border-radius: 999px; padding: 10px 22px; font-size: 15px; cursor: pointer; }
-.link-field { flex: 1; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: #fff8ec; }
+.link-field { flex: 1; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--field); color: var(--ink); }
 /* Dots and labels share identical column grids so they stay aligned. */
 .ladder { display: grid; align-items: end; height: 120px; padding: 16px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .dot-cell { display: flex; justify-content: center; align-items: flex-end; }
@@ -35,3 +49,7 @@ body { margin: 0; background: var(--bg); color: var(--ink); }
 .oct { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
 .oct button { background: none; border: 1px solid var(--line); border-radius: 6px; color: inherit; cursor: pointer; width: 22px; height: 22px; line-height: 1; }
 .oct button:hover { border-color: var(--ember); color: var(--ember); }
+.sel { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.sel select { font: inherit; color: var(--ink); background: var(--field); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; cursor: pointer; }
+.bpm { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.bpm input { width: 56px; font: inherit; color: var(--ink); background: var(--field); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; }
