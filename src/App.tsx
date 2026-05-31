@@ -10,6 +10,7 @@ import { createVoice, type Voice } from "./voice";
 import { VOICE_IDS, VOICE_LABELS, getPreset, type VoiceId } from "./voicePresets";
 import { LinkClock } from "./linkClock";
 import { enableLinkBridge, onLinkState, type LinkState } from "./engine/linkBridge";
+import { THEME_IDS, THEMES, applyTheme, loadThemeId, type ThemeId } from "./themes";
 
 // Block-art wordmark in mdrone's style (rendered with the .title-art glow).
 const LOGO = "█▀▄▀█ █▀█ █▀█ █▀▀ █▀█\n█ ▀ █ █▀▄ █▀█ █▄█ █▀█";
@@ -58,7 +59,9 @@ export function App() {
   const [linkState, setLinkState] = useState<LinkState>({
     tempo: 120, beat: 0, phase: 0, playing: false, peers: 0, clients: 0, connected: false,
   });
+  const [theme, setTheme] = useState<ThemeId>(loadThemeId);
 
+  const titleRef = useRef<HTMLHeadingElement>(null);
   const voiceRef = useRef<Voice | null>(null);
   const schedRef = useRef<Scheduler | null>(null);
   const stateRef = useRef<EngineState>(initState());
@@ -97,6 +100,33 @@ export function App() {
     });
     enableLinkBridge(loadTiming() === "link");
     return unsub;
+  }, []);
+
+  // Apply the colour theme (and re-apply on change).
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
+
+  // Character: the logo glows/flickers with the voice's output level — like a
+  // struck string lighting up. Mirrors mdrone's incandescent RMS pulse.
+  useEffect(() => {
+    let raf = 0;
+    let smooth = 0;
+    const tick = () => {
+      const el = titleRef.current;
+      const lvl = voiceRef.current?.getLevel() ?? 0;
+      smooth += (lvl - smooth) * 0.3;
+      if (el) {
+        const lit = Math.min(1, Math.sqrt(smooth * 12));
+        el.style.filter = `brightness(${(0.62 + 0.38 * lit).toFixed(3)})`;
+        const t = performance.now() / 1000;
+        const amp = smooth * 1.2;
+        el.style.transform = `translate(${(Math.sin(t * 23.1) * amp).toFixed(2)}px, ${(Math.cos(t * 29.7) * amp).toFixed(2)}px)`;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
   }, []);
 
   async function loadLink() {
@@ -188,16 +218,29 @@ export function App() {
   return (
     <main className="mraga">
       <div className="row">
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <h1 className="title-art" aria-label="mraga">{LOGO}</h1>
-          <span className="chip" title="mraga version">v{__APP_VERSION__}</span>
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <h1 ref={titleRef} className="title-art" aria-label="mraga">{LOGO}</h1>
+            <span className="chip" title="mraga version">v{__APP_VERSION__}</span>
+          </div>
+          <div className="tagline">a conducted line over the drone</div>
         </div>
-        <span
-          className="chip"
-          title="The drone scene mraga is locked to (tonic + microtonal tuning). Paste an mdrone link to change it."
-        >
-          ◈ linked: {tuning.label}
-        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <label className="sel" title="Colour theme — toggle to taste.">
+            THEME
+            <select value={theme} aria-label="theme" onChange={(e) => setTheme(e.target.value as ThemeId)}>
+              {THEME_IDS.map((id) => (
+                <option key={id} value={id}>{THEMES[id].label}</option>
+              ))}
+            </select>
+          </label>
+          <span
+            className="chip"
+            title="The drone scene mraga is locked to (tonic + microtonal tuning). Paste an mdrone link to change it."
+          >
+            ◈ linked: {tuning.label}
+          </span>
+        </div>
       </div>
 
       <div className="row" style={{ margin: "16px 0" }}>

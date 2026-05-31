@@ -1,13 +1,12 @@
 :root {
-  /* mraga palette: indigo on dark — m-family structure, complementary to
-     mdrone's amber. --ember is the single saturated accent (logo glow, knobs,
-     lit ladder dot, PLAY). */
-  --bg: #0e0f1a;
-  --ink: #e6e3f2;
-  --ember: #7c8cff;
-  --muted: #8a86a0;
-  --line: #2a2b3d;
-  --field: #181a2a;
+  /* Default theme (saffron). Overridden at runtime by src/themes.ts. --ember is
+     the single warm accent (logo glow, knobs, lit ladder dot, PLAY). */
+  --bg: #15100a;
+  --ink: #f1e3cd;
+  --ember: #eaa53a;
+  --muted: #9b8a70;
+  --line: #34291d;
+  --field: #211a12;
   font-family: ui-sans-serif, system-ui, sans-serif;
 }
 * { box-sizing: border-box; }
@@ -36,7 +35,8 @@ body { margin: 0; background: var(--bg); color: var(--ink); }
 .knobs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin: 24px 0; }
 .knob { text-align: center; }
 .knob input { width: 100%; accent-color: var(--ember); }
-.play { background: var(--ember); color: #fff; border: 0; border-radius: 999px; padding: 10px 22px; font-size: 15px; cursor: pointer; }
+.play { background: var(--ember); color: var(--bg); border: 0; border-radius: 999px; padding: 10px 22px; font-size: 15px; font-weight: 700; cursor: pointer; }
+.tagline { margin-top: 6px; font-size: 12px; font-style: italic; color: var(--muted); letter-spacing: 0.3px; }
 .link-field { flex: 1; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--field); color: var(--ink); }
 /* Dots and labels share identical column grids so they stay aligned. */
 .ladder { display: grid; align-items: end; height: 120px; padding: 16px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }

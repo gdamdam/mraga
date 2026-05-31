@@ -8,6 +8,7 @@ export type Voice = {
   pluck: (freq: number, velocity: number, glideFromFreq?: number) => void;
   setPreset: (params: KSParams) => void;
   setVolume: (v: number) => void; // master output gain, 0..1
+  getLevel: () => number;         // current output RMS, ~0..1 (for the logo pulse)
   dispose: () => void;
 };
 
@@ -40,9 +41,25 @@ export async function createVoice(): Promise<Voice> {
   const master = ctx.createGain();
   master.gain.value = 0.8;
 
+  // Analyser tap on the master so the UI can read output level (logo pulse).
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 256;
+  const buf = new Uint8Array(analyser.fftSize);
+
   node.connect(dry).connect(master);
   node.connect(convolver).connect(wet).connect(master);
+  master.connect(analyser);
   master.connect(ctx.destination);
+
+  const getLevel = () => {
+    analyser.getByteTimeDomainData(buf);
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) {
+      const x = (buf[i] - 128) / 128;
+      sum += x * x;
+    }
+    return Math.sqrt(sum / buf.length);
+  };
 
   return {
     ctx,
@@ -53,6 +70,7 @@ export async function createVoice(): Promise<Voice> {
     setVolume: (v) => {
       master.gain.value = Math.max(0, Math.min(1, v));
     },
+    getLevel,
     dispose: () => void ctx.close(),
   };
 }
