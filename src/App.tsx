@@ -51,7 +51,7 @@ export function App() {
   const [linkInput, setLinkInput] = useState("");
   const [playing, setPlaying] = useState(false);
   const [activeDegree, setActiveDegree] = useState<number | null>(null);
-  const [knobs, setKnobs] = useState<Knobs>({ density: 0.5, register: 0.5, restlessness: 0.2, silence: 0.25 });
+  const [knobs, setKnobs] = useState<Knobs>({ density: 0.5, register: 0.5, restlessness: 0.2, silence: 0.25, rhythm: 0.8 });
   const [voiceId, setVoiceId] = useState<VoiceId>(loadVoiceId);
   const [volume, setVolume] = useState<number>(loadVolume);
   const [octaveShift, setOctaveShift] = useState<number>(loadOctave);
@@ -173,7 +173,7 @@ export function App() {
   function currentScene(): MragaScene {
     return {
       v: 1,
-      knobs,
+      knobs: { ...knobs, rhythm: knobs.rhythm ?? 0.8 },
       voice: voiceId,
       octave: octaveShift,
       volume,
@@ -340,6 +340,7 @@ export function App() {
         <Knob label="REGISTER" lowPole="low" highPole="high" value={knobs.register} onChange={(v) => setKnobs({ ...knobs, register: v })} title="Centre pitch of the melodic line — low to high." />
         <Knob label="RESTLESS" lowPole="calm" highPole="roam" value={knobs.restlessness} onChange={(v) => setKnobs({ ...knobs, restlessness: v })} title="How far the line wanders from home — calm/home-bound to roaming." />
         <Knob label="SILENCE" lowPole="full" highPole="spacious" value={knobs.silence} onChange={(v) => setKnobs({ ...knobs, silence: v })} title="How much rest and space between phrases — full to spacious." />
+        <Knob label="RHYTHM" lowPole="loose" highPole="tight" value={knobs.rhythm ?? 0.8} onChange={(v) => setKnobs({ ...knobs, rhythm: v })} title="Timing feel — loose/rubato to a tight, metronomic pulse (independent of the melody)." />
       </div>
 
       <div className="row footer chip">

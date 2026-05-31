@@ -10,7 +10,7 @@ import { bytesToUrlSafeB64 } from "../../src/shareCodec";
 
 const SAMPLE_SCENE: MragaScene = {
   v: 1,
-  knobs: { density: 0.5, register: 0.3, restlessness: 0.7, silence: 0.1 },
+  knobs: { density: 0.5, register: 0.3, restlessness: 0.7, silence: 0.1, rhythm: 0.6 },
   voice: "sitar",
   octave: 0,
   volume: 0.8,

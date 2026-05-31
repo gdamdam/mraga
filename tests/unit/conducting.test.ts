@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { knobsToParams } from "../../src/conducting";
 
 const tonicHz = 261.6256;
-const base = { density: 0.5, register: 0.5, restlessness: 0.5, silence: 0.5 };
+const base = { density: 0.5, register: 0.5, restlessness: 0.5, silence: 0.5, rhythm: 0.5 };
 
 describe("knobsToParams", () => {
   it("DENSITY: higher density => lower base IOI (busier)", () => {
@@ -21,15 +21,24 @@ describe("knobsToParams", () => {
     expect(hi.centerPitchHz).toBeCloseTo(tonicHz * 4, 5);
   });
 
-  it("RESTLESSNESS: higher => more leaps & variance, weaker gravity & dwell", () => {
+  it("RESTLESSNESS: higher => more leaps, weaker gravity/dwell, less repetition", () => {
     const calm = knobsToParams({ ...base, restlessness: 0 }, tonicHz);
     const roam = knobsToParams({ ...base, restlessness: 1 }, tonicHz);
     expect(roam.contourStrength).toBeLessThan(calm.contourStrength);
     expect(roam.leapProbability).toBeGreaterThan(calm.leapProbability);
-    expect(roam.ioiJitter).toBeGreaterThan(calm.ioiJitter);
     expect(roam.tonicGravity).toBeLessThan(calm.tonicGravity);
     expect(roam.restingDwell).toBeLessThan(calm.restingDwell);
     expect(roam.repeatProb).toBeLessThan(calm.repeatProb);
+  });
+
+  it("RHYTHM: higher => tighter timing (lower jitter); independent of RESTLESSNESS", () => {
+    const loose = knobsToParams({ ...base, rhythm: 0 }, tonicHz);
+    const tight = knobsToParams({ ...base, rhythm: 1 }, tonicHz);
+    expect(tight.ioiJitter).toBeLessThan(loose.ioiJitter);
+    expect(tight.ioiJitter).toBeCloseTo(0, 5);
+    // RHYTHM must not affect the pitch/melodic params (those are RESTLESSNESS).
+    expect(tight.contourStrength).toBeCloseTo(loose.contourStrength, 5);
+    expect(tight.repeatProb).toBeCloseTo(loose.repeatProb, 5);
   });
 
   it("SILENCE: higher => more rests, longer phrase pauses", () => {
@@ -40,8 +49,9 @@ describe("knobsToParams", () => {
   });
 
   it("clamps knob values outside 0..1", () => {
-    const p = knobsToParams({ density: 2, register: -1, restlessness: 5, silence: -3 }, tonicHz);
+    const p = knobsToParams({ density: 2, register: -1, restlessness: 5, silence: -3, rhythm: 2 }, tonicHz);
     expect(p.baseIoiSec).toBeCloseTo(0.4, 5); // density clamped to 1
     expect(p.centerPitchHz).toBeCloseTo(tonicHz, 5); // register clamped to 0
+    expect(p.ioiJitter).toBeCloseTo(0, 5); // rhythm clamped to 1
   });
 });

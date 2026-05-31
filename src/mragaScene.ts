@@ -6,7 +6,7 @@ import { bytesToUrlSafeB64, urlSafeB64ToBytes } from "./shareCodec";
 
 export type MragaScene = {
   v: 1;
-  knobs: { density: number; register: number; restlessness: number; silence: number };
+  knobs: { density: number; register: number; restlessness: number; silence: number; rhythm: number };
   voice: string;   // VoiceId
   octave: number;  // -2..2
   volume: number;  // 0..1
@@ -38,7 +38,7 @@ function isFiniteNumber(v: unknown): v is number {
 
 function validateKnobs(
   knobs: unknown,
-): { density: number; register: number; restlessness: number; silence: number } | null {
+): { density: number; register: number; restlessness: number; silence: number; rhythm: number } | null {
   if (!knobs || typeof knobs !== "object") return null;
   const k = knobs as Record<string, unknown>;
   for (const key of ["density", "register", "restlessness", "silence"]) {
@@ -49,6 +49,8 @@ function validateKnobs(
     register: clamp(k.register as number, 0, 1),
     restlessness: clamp(k.restlessness as number, 0, 1),
     silence: clamp(k.silence as number, 0, 1),
+    // rhythm added later — default to tight (0.8) for older shared scenes.
+    rhythm: isFiniteNumber(k.rhythm) ? clamp(k.rhythm as number, 0, 1) : 0.8,
   };
 }
 

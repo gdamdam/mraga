@@ -32,7 +32,7 @@ body { margin: 0; background: var(--bg); color: var(--ink); }
 /* A chip rendered as a clickable control (voice/timing/octave). */
 .chip-btn { background: none; border: none; color: inherit; font: inherit; cursor: pointer; padding: 0; }
 .chip-btn:hover { color: var(--ember); }
-.knobs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin: 24px 0; }
+.knobs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin: 24px 0; }
 .knob { text-align: center; }
 .knob input { width: 100%; accent-color: var(--ember); }
 .play { background: var(--ember); color: var(--bg); border: 0; border-radius: 999px; padding: 10px 22px; font-size: 15px; font-weight: 700; cursor: pointer; }

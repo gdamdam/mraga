@@ -5,6 +5,7 @@ export type Knobs = {
   register: number;
   restlessness: number;
   silence: number;
+  rhythm?: number; // timing feel: 0 = loose/rubato, 1 = tight/metronomic (default 0.8)
 };
 
 const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
@@ -15,12 +16,13 @@ export function knobsToParams(knobs: Knobs, tonicHz: number): EngineParams {
   const register = clamp01(knobs.register);
   const restless = clamp01(knobs.restlessness);
   const silence = clamp01(knobs.silence);
+  const rhythm = clamp01(knobs.rhythm ?? 0.8);
 
   return {
     // DENSITY: steady pulse unit, 4.0s (sparse) -> 0.4s (busy), log interp.
     baseIoiSec: 4.0 * Math.pow(0.4 / 4.0, density),
-    // RESTLESSNESS: timing humanise (≈0 = dead steady) and rhythmic variety.
-    ioiJitter: lerp(0.02, 0.35, restless),
+    // RHYTHM: timing tightness — loose/rubato (0) to metronomic (1).
+    ioiJitter: lerp(0.35, 0.0, rhythm),
     longNoteProb: lerp(0.35, 0.12, restless),
     // REGISTER: centre pitch from tonic (0) to two octaves up (1).
     centerPitchHz: tonicHz * Math.pow(2, register * 2),
