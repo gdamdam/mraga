@@ -308,9 +308,9 @@ export function App() {
             type="button"
             className="chip-btn"
             onClick={() => reseed((Math.random() * 0x100000000) >>> 0)}
-            title="Reroll — generate a different improvisation (new seed). The seed is saved in the share link, so a shared sound replays identically."
+            title="Reroll — generate a different improvisation. The displayed seed changes each click and is saved in the share link, so a shared sound replays identically."
           >
-            🎲 reroll
+            🎲 {seed.toString(16)}
           </button>
           <button
             type="button"

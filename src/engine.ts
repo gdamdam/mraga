@@ -54,6 +54,7 @@ export type EngineState = {
   lastRhythm: number[];   // rhythm of the last phrase (repeated with the motif)
   prevPitchHz: number | null;
   pendingPhraseEnd: boolean;
+  sameRun: number; // consecutive repeats of the current pitch (anti-stuck guard)
 };
 
 export function initState(): EngineState {
@@ -67,6 +68,7 @@ export function initState(): EngineState {
     lastRhythm: [],
     prevPitchHz: null,
     pendingPhraseEnd: false,
+    sameRun: 0,
   };
 }
 
@@ -228,10 +230,10 @@ export function nextEvent(
   }
 
   const curStep = degreeToStepPos(state.degreeIndex, state.octave, scaleLen);
+  const allowed = focusedDegrees(scaleCents, resting, params.focus);
 
   // 2. Need a new phrase? Build one (repeat the last motif, or a fresh contour).
   if (state.phraseIdx >= state.phrase.length) {
-    const allowed = focusedDegrees(scaleCents, resting, params.focus);
     const built = buildPhrase(
       curStep, centerStep, lo, hi, scaleLen, resting, params, rng, state.lastDeltas, state.lastRhythm, allowed,
     );
@@ -244,11 +246,31 @@ export function nextEvent(
 
   // 3. Emit the next note of the phrase, with its motif-bound rhythm.
   const phraseStart = next.phraseIdx === 0;
-  const nextStep = next.phrase[next.phraseIdx];
+  let nextStep = next.phrase[next.phraseIdx];
   const mult = next.phraseRhythm[next.phraseIdx] ?? 1;
   next.phraseIdx = next.phraseIdx + 1;
   // Sometimes breathe after a completed phrase; sometimes flow into the next.
   if (next.phraseIdx >= next.phrase.length) next.pendingPhraseEnd = rng() < 0.6;
+
+  // Anti-stuck guard: allow at most two identical pitches in a row, then nudge
+  // to an adjacent allowed degree (prefer toward centre) so it can't drone on
+  // one note.
+  if (nextStep === curStep) {
+    next.sameRun = state.sameRun + 1;
+    if (next.sameRun >= 2) {
+      const dir = centerStep < curStep ? -1 : 1;
+      for (const off of [dir, -dir, 2 * dir, -2 * dir]) {
+        const cand = snapToAllowed(curStep + off, allowed, scaleLen, lo, hi);
+        if (cand !== curStep) {
+          nextStep = cand;
+          break;
+        }
+      }
+      next.sameRun = 0;
+    }
+  } else {
+    next.sameRun = 0;
+  }
 
   const { degreeIndex, octave } = stepPosToDegree(nextStep, scaleLen);
   const pitchHz = degreeToHz(scaleCents, tonicHz, degreeIndex, octave);
