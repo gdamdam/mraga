@@ -42,7 +42,7 @@ function loadVolume(): number {
 }
 function loadOctave(): number {
   const v = parseInt(localStorage.getItem(OCT_KEY) ?? "", 10);
-  return Number.isFinite(v) ? Math.max(-2, Math.min(2, v)) : 0;
+  return Number.isFinite(v) ? Math.max(-2, Math.min(2, v)) : -1;
 }
 
 export function App() {
