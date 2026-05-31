@@ -5,12 +5,12 @@ const tonicHz = 261.6256;
 const base = { density: 0.5, register: 0.5, restlessness: 0.5, silence: 0.5 };
 
 describe("knobsToParams", () => {
-  it("DENSITY: higher density => lower mean IOI (busier)", () => {
+  it("DENSITY: higher density => lower base IOI (busier)", () => {
     const sparse = knobsToParams({ ...base, density: 0 }, tonicHz);
     const busy = knobsToParams({ ...base, density: 1 }, tonicHz);
-    expect(sparse.meanIoiSec).toBeGreaterThan(busy.meanIoiSec);
-    expect(sparse.meanIoiSec).toBeCloseTo(4.0, 5);
-    expect(busy.meanIoiSec).toBeCloseTo(0.4, 5);
+    expect(sparse.baseIoiSec).toBeGreaterThan(busy.baseIoiSec);
+    expect(sparse.baseIoiSec).toBeCloseTo(4.0, 5);
+    expect(busy.baseIoiSec).toBeCloseTo(0.4, 5);
   });
 
   it("REGISTER: higher register => higher center pitch", () => {
@@ -24,8 +24,9 @@ describe("knobsToParams", () => {
   it("RESTLESSNESS: higher => more leaps & variance, weaker gravity & dwell", () => {
     const calm = knobsToParams({ ...base, restlessness: 0 }, tonicHz);
     const roam = knobsToParams({ ...base, restlessness: 1 }, tonicHz);
+    expect(roam.contourStrength).toBeLessThan(calm.contourStrength);
     expect(roam.leapProbability).toBeGreaterThan(calm.leapProbability);
-    expect(roam.stepVariance).toBeGreaterThan(calm.stepVariance);
+    expect(roam.ioiJitter).toBeGreaterThan(calm.ioiJitter);
     expect(roam.tonicGravity).toBeLessThan(calm.tonicGravity);
     expect(roam.restingDwell).toBeLessThan(calm.restingDwell);
   });
@@ -39,7 +40,7 @@ describe("knobsToParams", () => {
 
   it("clamps knob values outside 0..1", () => {
     const p = knobsToParams({ density: 2, register: -1, restlessness: 5, silence: -3 }, tonicHz);
-    expect(p.meanIoiSec).toBeCloseTo(0.4, 5); // density clamped to 1
+    expect(p.baseIoiSec).toBeCloseTo(0.4, 5); // density clamped to 1
     expect(p.centerPitchHz).toBeCloseTo(tonicHz, 5); // register clamped to 0
   });
 });
