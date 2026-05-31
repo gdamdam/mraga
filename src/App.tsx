@@ -12,6 +12,7 @@ import { LinkClock } from "./linkClock";
 import { enableLinkBridge, onLinkState, type LinkState } from "./engine/linkBridge";
 import { THEME_IDS, THEMES, applyTheme, loadThemeId, type ThemeId } from "./themes";
 import { sceneToUrl, sceneFromUrl, type MragaScene } from "./mragaScene";
+import { loadPresets, savePresets, upsertPreset, deletePreset, type Preset } from "./presets";
 
 // Block-art wordmark in mdrone's style (rendered with the .title-art glow).
 const LOGO = "█▀▄▀█ █▀█ █▀█ █▀▀ █▀█\n█ ▀ █ █▀▄ █▀█ █▄█ █▀█";
@@ -53,6 +54,8 @@ export function App() {
   const [activeDegree, setActiveDegree] = useState<number | null>(null);
   const [knobs, setKnobs] = useState<Knobs>({ density: 0.5, register: 0.5, restlessness: 0.2, silence: 0.25, rhythm: 0.8, theme: 0.55, focus: 0.5 });
   const [seed, setSeed] = useState<number>(() => Date.now() & 0xffff);
+  const [presets, setPresets] = useState<Preset[]>(loadPresets);
+  const [selectedPreset, setSelectedPreset] = useState("");
   const [voiceId, setVoiceId] = useState<VoiceId>(loadVoiceId);
   const [volume, setVolume] = useState<number>(loadVolume);
   const [octaveShift, setOctaveShift] = useState<number>(loadOctave);
@@ -231,6 +234,29 @@ export function App() {
     if (typeof s.seed === "number") reseed(s.seed);
   }
 
+  function saveCurrentPreset() {
+    const name = window.prompt("Save preset as:")?.trim();
+    if (!name) return;
+    const next = upsertPreset(presets, name, currentScene());
+    setPresets(next);
+    savePresets(next);
+    setSelectedPreset(name);
+  }
+
+  function recallPreset(name: string) {
+    setSelectedPreset(name);
+    const p = presets.find((x) => x.name === name);
+    if (p) applyScene(p.scene);
+  }
+
+  function removeSelectedPreset() {
+    if (!selectedPreset) return;
+    const next = deletePreset(presets, selectedPreset);
+    setPresets(next);
+    savePresets(next);
+    setSelectedPreset("");
+  }
+
   // On mount, load a shared scene if the URL carries one (?s=…).
   useEffect(() => {
     const s = sceneFromUrl(window.location.href);
@@ -303,7 +329,24 @@ export function App() {
           </div>
           <div className="tagline">a conducted line over the drone</div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <label className="sel" title="Saved presets — recall a sound you saved.">
+            PRESET
+            <select value={selectedPreset} aria-label="presets" onChange={(e) => recallPreset(e.target.value)}>
+              <option value="">—</option>
+              {presets.map((p) => (
+                <option key={p.name} value={p.name}>{p.name}</option>
+              ))}
+            </select>
+          </label>
+          <button type="button" className="chip-btn" onClick={saveCurrentPreset} title="Save the current sound as a named preset.">
+            save
+          </button>
+          {selectedPreset && (
+            <button type="button" className="chip-btn" onClick={removeSelectedPreset} title="Delete the selected preset.">
+              ✕
+            </button>
+          )}
           <button
             type="button"
             className="chip-btn"
