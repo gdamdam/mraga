@@ -1,10 +1,13 @@
 :root {
-  --bg: #efe6d4;
-  --ink: #3a2f24;
-  --ember: #c0572b;
-  --muted: #8a7a64;
-  --line: #cabfa8;
-  --field: #fff8ec;
+  /* mraga palette: indigo on dark — m-family structure, complementary to
+     mdrone's amber. --ember is the single saturated accent (logo glow, knobs,
+     lit ladder dot, PLAY). */
+  --bg: #0e0f1a;
+  --ink: #e6e3f2;
+  --ember: #7c8cff;
+  --muted: #8a86a0;
+  --line: #2a2b3d;
+  --field: #181a2a;
   font-family: ui-sans-serif, system-ui, sans-serif;
 }
 * { box-sizing: border-box; }
