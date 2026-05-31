@@ -6,13 +6,17 @@ import { bytesToUrlSafeB64, urlSafeB64ToBytes } from "./shareCodec";
 
 export type MragaScene = {
   v: 1;
-  knobs: { density: number; register: number; restlessness: number; silence: number; rhythm: number };
+  knobs: {
+    density: number; register: number; restlessness: number; silence: number;
+    rhythm: number; theme: number; focus: number;
+  };
   voice: string;   // VoiceId
   octave: number;  // -2..2
   volume: number;  // 0..1
   timing: "free" | "bpm" | "link";
   bpm: number;     // 40..240
   theme: string;   // ThemeId
+  seed: number;    // PRNG seed (reproducible improvisation)
   tuning: { tonicHz: number; scaleCents: number[]; label: string };
 };
 
@@ -38,7 +42,7 @@ function isFiniteNumber(v: unknown): v is number {
 
 function validateKnobs(
   knobs: unknown,
-): { density: number; register: number; restlessness: number; silence: number; rhythm: number } | null {
+): MragaScene["knobs"] | null {
   if (!knobs || typeof knobs !== "object") return null;
   const k = knobs as Record<string, unknown>;
   for (const key of ["density", "register", "restlessness", "silence"]) {
@@ -49,8 +53,10 @@ function validateKnobs(
     register: clamp(k.register as number, 0, 1),
     restlessness: clamp(k.restlessness as number, 0, 1),
     silence: clamp(k.silence as number, 0, 1),
-    // rhythm added later — default to tight (0.8) for older shared scenes.
+    // Added later — defaults keep older shared scenes valid.
     rhythm: isFiniteNumber(k.rhythm) ? clamp(k.rhythm as number, 0, 1) : 0.8,
+    theme: isFiniteNumber(k.theme) ? clamp(k.theme as number, 0, 1) : 0.7,
+    focus: isFiniteNumber(k.focus) ? clamp(k.focus as number, 0, 1) : 0,
   };
 }
 
@@ -104,6 +110,9 @@ export function decodeScene(payload: string): MragaScene | null {
     const tuning = validateTuning(raw.tuning);
     if (!tuning) return null;
 
+    // seed added later — default to 0 (deterministic) for older shared scenes.
+    const seed = isFiniteNumber(raw.seed) ? Math.round(raw.seed as number) : 0;
+
     return {
       v: 1,
       knobs,
@@ -113,6 +122,7 @@ export function decodeScene(payload: string): MragaScene | null {
       timing,
       bpm,
       theme: raw.theme,
+      seed,
       tuning,
     };
   } catch {

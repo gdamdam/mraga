@@ -21,14 +21,26 @@ describe("knobsToParams", () => {
     expect(hi.centerPitchHz).toBeCloseTo(tonicHz * 4, 5);
   });
 
-  it("RESTLESSNESS: higher => more leaps, weaker gravity/dwell, less repetition", () => {
+  it("RESTLESSNESS: higher => more leaps, weaker gravity/dwell", () => {
     const calm = knobsToParams({ ...base, restlessness: 0 }, tonicHz);
     const roam = knobsToParams({ ...base, restlessness: 1 }, tonicHz);
     expect(roam.contourStrength).toBeLessThan(calm.contourStrength);
     expect(roam.leapProbability).toBeGreaterThan(calm.leapProbability);
     expect(roam.tonicGravity).toBeLessThan(calm.tonicGravity);
     expect(roam.restingDwell).toBeLessThan(calm.restingDwell);
-    expect(roam.repeatProb).toBeLessThan(calm.repeatProb);
+  });
+
+  it("THEME: higher => stronger motif repetition (repeatProb)", () => {
+    const free = knobsToParams({ ...base, theme: 0 }, tonicHz);
+    const locked = knobsToParams({ ...base, theme: 1 }, tonicHz);
+    expect(locked.repeatProb).toBeGreaterThan(free.repeatProb);
+  });
+
+  it("FOCUS: passes through, narrowing the palette as it rises", () => {
+    const wide = knobsToParams({ ...base, focus: 0 }, tonicHz);
+    const tight = knobsToParams({ ...base, focus: 1 }, tonicHz);
+    expect(wide.focus).toBeCloseTo(0, 5);
+    expect(tight.focus).toBeCloseTo(1, 5);
   });
 
   it("RHYTHM: higher => tighter timing (lower jitter); independent of RESTLESSNESS", () => {

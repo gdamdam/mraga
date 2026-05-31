@@ -38,6 +38,7 @@ export type EngineParams = {
   tonicGravity: number;
   restingDwell: number;
   repeatProb: number;
+  focus: number; // 0 = all scale degrees, 1 = small characteristic palette
   pRest: number;
   phrasePauseFactor: number;
   glideProbability: number;
@@ -103,9 +104,38 @@ function nearestRestingStep(
   return best;
 }
 
+// FOCUS: which scale degrees are allowed. focus=0 → all; focus=1 → ~5 of the
+// most characteristic degrees (a pentatonic-ish core), narrowing the palette so
+// the line is more coherent / less wandering. Tonic is always allowed.
+function focusedDegrees(scaleCents: number[], resting: number[], focus: number): boolean[] {
+  const n = scaleCents.length;
+  const keep = Math.max(Math.min(5, n), Math.min(n, Math.round(n + (5 - n) * focus)));
+  // Priority: a 12-tone major-pentatonic-first order, else by consonance.
+  const priority =
+    n === 12
+      ? [0, 2, 4, 7, 9, 5, 11, 3, 8, 10, 1, 6]
+      : Array.from({ length: n }, (_, i) => i).sort((a, b) => resting[b] - resting[a] || a - b);
+  const allowed = new Array<boolean>(n).fill(false);
+  for (let i = 0; i < keep && i < priority.length; i++) allowed[priority[i]] = true;
+  allowed[0] = true; // tonic always in the palette
+  return allowed;
+}
+
+function snapToAllowed(sp: number, allowed: boolean[], scaleLen: number, lo: number, hi: number): number {
+  const deg = (x: number) => ((x % scaleLen) + scaleLen) % scaleLen;
+  if (allowed[deg(sp)]) return sp;
+  for (let r = 1; r <= scaleLen; r++) {
+    for (const cand of [sp - r, sp + r]) {
+      if (cand >= Math.ceil(lo) && cand <= Math.floor(hi) && allowed[deg(cand)]) return cand;
+    }
+  }
+  return sp;
+}
+
 // Build the next phrase: pitch path (steps + deltas) AND its rhythm. Either
 // repeats the previous motif (pitch + rhythm) or generates a fresh directed
-// contour that resolves onto a resting note.
+// contour that resolves onto a resting note. All notes are snapped to the
+// FOCUS palette (`allowed`).
 function buildPhrase(
   curStep: number,
   centerStep: number,
@@ -117,20 +147,24 @@ function buildPhrase(
   rng: () => number,
   lastDeltas: number[],
   lastRhythm: number[],
+  allowed: boolean[],
 ): { steps: number[]; deltas: number[]; rhythm: number[] } {
-  // Motif repetition: replay the previous shape (pitch + rhythm) from here.
+  // Motif repetition: replay the previous shape (pitch + rhythm) from here,
+  // snapped to the FOCUS palette.
   if (lastDeltas.length >= 2 && rng() < params.repeatProb) {
     const steps: number[] = [];
     let p = curStep;
     for (const d of lastDeltas) {
-      p = reflectClamp(p + d, lo, hi);
+      p = snapToAllowed(reflectClamp(p + d, lo, hi), allowed, scaleLen, lo, hi);
       steps.push(p);
     }
-    steps[steps.length - 1] = nearestRestingStep(steps[steps.length - 1], lo, hi, scaleLen, resting);
+    steps[steps.length - 1] = snapToAllowed(
+      nearestRestingStep(steps[steps.length - 1], lo, hi, scaleLen, resting), allowed, scaleLen, lo, hi,
+    );
     return { steps, deltas: lastDeltas, rhythm: lastRhythm };
   }
 
-  // Fresh directed contour toward a resting target.
+  // Fresh directed contour toward a resting target (on the FOCUS palette).
   const distFromCenter = curStep - centerStep;
   const dir =
     Math.abs(distFromCenter) > params.registerHalfSpanSteps * 0.6
@@ -141,7 +175,9 @@ function buildPhrase(
         ? -1
         : 1;
   const reach = 3 + Math.floor(rng() * 5); // 3..7 steps — longer, singable arcs
-  const target = nearestRestingStep(reflectClamp(curStep + dir * reach, lo, hi), lo, hi, scaleLen, resting);
+  const target = snapToAllowed(
+    nearestRestingStep(reflectClamp(curStep + dir * reach, lo, hi), lo, hi, scaleLen, resting), allowed, scaleLen, lo, hi,
+  );
 
   const steps: number[] = [];
   let p = curStep;
@@ -151,7 +187,7 @@ function buildPhrase(
     const step = rng() < params.contourStrength ? toward : rng() < 0.5 ? toward : -toward;
     let mag = 1;
     if (rng() < params.leapProbability) mag = 2 + Math.floor(rng() * 2); // 2..3
-    p = reflectClamp(p + step * mag, lo, hi);
+    p = snapToAllowed(reflectClamp(p + step * mag, lo, hi), allowed, scaleLen, lo, hi);
     steps.push(p);
   }
   if (steps.length === 0 || steps[steps.length - 1] !== target) steps.push(target);
@@ -195,8 +231,9 @@ export function nextEvent(
 
   // 2. Need a new phrase? Build one (repeat the last motif, or a fresh contour).
   if (state.phraseIdx >= state.phrase.length) {
+    const allowed = focusedDegrees(scaleCents, resting, params.focus);
     const built = buildPhrase(
-      curStep, centerStep, lo, hi, scaleLen, resting, params, rng, state.lastDeltas, state.lastRhythm,
+      curStep, centerStep, lo, hi, scaleLen, resting, params, rng, state.lastDeltas, state.lastRhythm, allowed,
     );
     next.phrase = built.steps;
     next.phraseRhythm = built.rhythm;

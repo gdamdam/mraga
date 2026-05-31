@@ -10,13 +10,14 @@ import { bytesToUrlSafeB64 } from "../../src/shareCodec";
 
 const SAMPLE_SCENE: MragaScene = {
   v: 1,
-  knobs: { density: 0.5, register: 0.3, restlessness: 0.7, silence: 0.1, rhythm: 0.6 },
+  knobs: { density: 0.5, register: 0.3, restlessness: 0.7, silence: 0.1, rhythm: 0.6, theme: 0.5, focus: 0.4 },
   voice: "sitar",
   octave: 0,
   volume: 0.8,
   timing: "bpm",
   bpm: 120,
   theme: "dusk",
+  seed: 4242,
   tuning: {
     tonicHz: 261.63,
     scaleCents: [0, 204, 386, 498, 702, 884, 1088],

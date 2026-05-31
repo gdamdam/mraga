@@ -51,7 +51,8 @@ export function App() {
   const [linkInput, setLinkInput] = useState("");
   const [playing, setPlaying] = useState(false);
   const [activeDegree, setActiveDegree] = useState<number | null>(null);
-  const [knobs, setKnobs] = useState<Knobs>({ density: 0.5, register: 0.5, restlessness: 0.2, silence: 0.25, rhythm: 0.8 });
+  const [knobs, setKnobs] = useState<Knobs>({ density: 0.5, register: 0.5, restlessness: 0.2, silence: 0.25, rhythm: 0.8, theme: 0.55, focus: 0.5 });
+  const [seed, setSeed] = useState<number>(() => Date.now() & 0xffff);
   const [voiceId, setVoiceId] = useState<VoiceId>(loadVoiceId);
   const [volume, setVolume] = useState<number>(loadVolume);
   const [octaveShift, setOctaveShift] = useState<number>(loadOctave);
@@ -67,7 +68,7 @@ export function App() {
   const voiceRef = useRef<Voice | null>(null);
   const schedRef = useRef<Scheduler | null>(null);
   const stateRef = useRef<EngineState>(initState());
-  const rngRef = useRef<() => number>(makeRng(Date.now() & 0xffff));
+  const rngRef = useRef<() => number>(makeRng(seed));
   const knobsRef = useRef(knobs);
   const tuningRef = useRef(tuning);
   const linkClockRef = useRef(new LinkClock());      // fed by the Ableton bridge
@@ -135,6 +136,14 @@ export function App() {
     setTuning(await importTuningFromUrl(linkInput));
   }
 
+  // Reroll the improvisation: a new seed reseeds the PRNG and restarts the
+  // phrase state. Takes effect live (the scheduler reads these refs each pull).
+  function reseed(s: number) {
+    setSeed(s);
+    rngRef.current = makeRng(s);
+    stateRef.current = initState();
+  }
+
   function selectVoice(id: VoiceId) {
     setVoiceId(id);
     localStorage.setItem(VOICE_KEY, id);
@@ -173,13 +182,14 @@ export function App() {
   function currentScene(): MragaScene {
     return {
       v: 1,
-      knobs: { ...knobs, rhythm: knobs.rhythm ?? 0.8 },
+      knobs: { ...knobs, rhythm: knobs.rhythm ?? 0.8, theme: knobs.theme ?? 0.7, focus: knobs.focus ?? 0 },
       voice: voiceId,
       octave: octaveShift,
       volume,
       timing: timingMode,
       bpm,
       theme,
+      seed,
       tuning: { tonicHz: tuning.tonicHz, scaleCents: tuning.scaleCents, label: tuning.label },
     };
   }
@@ -218,6 +228,7 @@ export function App() {
     if (s.tuning) {
       setTuning({ tonicHz: s.tuning.tonicHz, scaleCents: s.tuning.scaleCents, label: s.tuning.label });
     }
+    if (typeof s.seed === "number") reseed(s.seed);
   }
 
   // On mount, load a shared scene if the URL carries one (?s=…).
@@ -296,8 +307,16 @@ export function App() {
           <button
             type="button"
             className="chip-btn"
+            onClick={() => reseed((Math.random() * 0x100000000) >>> 0)}
+            title="Reroll — generate a different improvisation (new seed). The seed is saved in the share link, so a shared sound replays identically."
+          >
+            🎲 reroll
+          </button>
+          <button
+            type="button"
+            className="chip-btn"
             onClick={shareScene}
-            title="Copy a link that restores this exact sound (voice, knobs, octave, volume, timing, theme, tuning)."
+            title="Copy a link that restores this exact sound (voice, knobs, octave, volume, timing, theme, tuning, seed)."
           >
             {shared ? "copied ✓" : "SHARE"}
           </button>
@@ -341,6 +360,8 @@ export function App() {
         <Knob label="RESTLESS" lowPole="calm" highPole="roam" value={knobs.restlessness} onChange={(v) => setKnobs({ ...knobs, restlessness: v })} title="How far the line wanders from home — calm/home-bound to roaming." />
         <Knob label="SILENCE" lowPole="full" highPole="spacious" value={knobs.silence} onChange={(v) => setKnobs({ ...knobs, silence: v })} title="How much rest and space between phrases — full to spacious." />
         <Knob label="RHYTHM" lowPole="loose" highPole="tight" value={knobs.rhythm ?? 0.8} onChange={(v) => setKnobs({ ...knobs, rhythm: v })} title="Timing feel — loose/rubato to a tight, metronomic pulse (independent of the melody)." />
+        <Knob label="THEME" lowPole="free" highPole="locked" value={knobs.theme ?? 0.7} onChange={(v) => setKnobs({ ...knobs, theme: v })} title="Motif lock — invent new material (free) ↔ keep repeating one recurring figure (locked). Higher = less random." />
+        <Knob label="FOCUS" lowPole="wide" highPole="tight" value={knobs.focus ?? 0} onChange={(v) => setKnobs({ ...knobs, focus: v })} title="Note palette — all scale degrees (wide) ↔ a few characteristic notes (tight). Fewer notes = more coherent." />
       </div>
 
       <div className="row footer chip">
