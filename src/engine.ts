@@ -1,8 +1,9 @@
 // src/engine.ts
-// Melodic engine: directed phrase contours over a steady pulse. A phrase picks
-// a direction + a resting-note target, walks (mostly stepwise) toward it, and
-// resolves on it, followed by a breath. RESTLESSNESS loosens the contour and
-// the rhythm toward the old wandering walk. Pure & seeded: no audio, no Date.
+// Melodic engine: each phrase is a precomputed shape (a directed contour that
+// resolves on a resting note), and phrases REPEAT/SEQUENCE the previous shape —
+// recurring motifs make the line feel intentional rather than random. The
+// pulse is steady; RESTLESSNESS loosens contour/repetition toward a free walk.
+// Pure & seeded: no audio, no Date.
 import { gaussian } from "./rng";
 import {
   degreeToHz,
@@ -35,6 +36,7 @@ export type EngineParams = {
   leapProbability: number;
   tonicGravity: number;
   restingDwell: number;
+  repeatProb: number;
   pRest: number;
   phrasePauseFactor: number;
   glideProbability: number;
@@ -43,10 +45,9 @@ export type EngineParams = {
 export type EngineState = {
   degreeIndex: number;
   octave: number;
-  phrasePosition: number;
-  phraseLength: number;
-  phraseDir: number; // +1 up / -1 down
-  phraseTargetStep: number;
+  phrase: number[];     // precomputed lattice step positions for the current phrase
+  phraseIdx: number;    // index of the next note to emit within `phrase`
+  lastDeltas: number[]; // step deltas of the last phrase (for repetition/sequence)
   prevPitchHz: number | null;
   pendingPhraseEnd: boolean;
 };
@@ -55,22 +56,24 @@ export function initState(): EngineState {
   return {
     degreeIndex: 0,
     octave: 1,
-    phrasePosition: 0,
-    phraseLength: 0,
-    phraseDir: 1,
-    phraseTargetStep: 0,
+    phrase: [],
+    phraseIdx: 0,
+    lastDeltas: [],
     prevPitchHz: null,
     pendingPhraseEnd: false,
   };
 }
 
 function sampleIoi(params: EngineParams, rng: () => number, mult: number): number {
-  // Steady pulse * note-value multiple, with a gentle multiplicative humanise
-  // (≈1 when ioiJitter is tiny, so calm playing is near-metronomic).
   return params.baseIoiSec * mult * Math.exp(params.ioiJitter * gaussian(rng));
 }
 
-// Nearest lattice step in [lo,hi] whose degree is a resting (consonant) note.
+function reflectClamp(sp: number, lo: number, hi: number): number {
+  if (sp > hi) sp = hi - (sp - hi);
+  if (sp < lo) sp = lo + (lo - sp);
+  return Math.min(hi, Math.max(lo, sp));
+}
+
 function nearestRestingStep(
   target: number,
   lo: number,
@@ -91,6 +94,67 @@ function nearestRestingStep(
     }
   }
   return best;
+}
+
+// Build the next phrase as a sequence of lattice step positions. Either repeats
+// the previous shape (motif/sequence) or generates a fresh directed contour
+// that resolves onto a resting note.
+function buildPhrase(
+  curStep: number,
+  centerStep: number,
+  lo: number,
+  hi: number,
+  scaleLen: number,
+  resting: number[],
+  params: EngineParams,
+  rng: () => number,
+  lastDeltas: number[],
+): { steps: number[]; deltas: number[] } {
+  // Motif repetition: replay the previous phrase's interval shape from here.
+  if (lastDeltas.length >= 2 && rng() < params.repeatProb) {
+    const steps: number[] = [];
+    let p = curStep;
+    for (const d of lastDeltas) {
+      p = reflectClamp(p + d, lo, hi);
+      steps.push(p);
+    }
+    steps[steps.length - 1] = nearestRestingStep(steps[steps.length - 1], lo, hi, scaleLen, resting);
+    return { steps, deltas: lastDeltas };
+  }
+
+  // Fresh directed contour toward a resting target.
+  const distFromCenter = curStep - centerStep;
+  const dir =
+    Math.abs(distFromCenter) > params.registerHalfSpanSteps * 0.6
+      ? distFromCenter > 0
+        ? -1
+        : 1
+      : rng() < 0.5
+        ? -1
+        : 1;
+  const reach = 2 + Math.floor(rng() * 4); // 2..5 steps
+  const target = nearestRestingStep(reflectClamp(curStep + dir * reach, lo, hi), lo, hi, scaleLen, resting);
+
+  const steps: number[] = [];
+  let p = curStep;
+  let guard = 0;
+  while (p !== target && guard++ < 24) {
+    const toward = Math.sign(target - p) || dir;
+    const step = rng() < params.contourStrength ? toward : rng() < 0.5 ? toward : -toward;
+    let mag = 1;
+    if (rng() < params.leapProbability) mag = 2 + Math.floor(rng() * 2); // 2..3
+    p = reflectClamp(p + step * mag, lo, hi);
+    steps.push(p);
+  }
+  if (steps.length === 0 || steps[steps.length - 1] !== target) steps.push(target);
+
+  const deltas: number[] = [];
+  let prev = curStep;
+  for (const s of steps) {
+    deltas.push(s - prev);
+    prev = s;
+  }
+  return { steps, deltas };
 }
 
 export function nextEvent(
@@ -119,40 +183,19 @@ export function nextEvent(
 
   const curStep = degreeToStepPos(state.degreeIndex, state.octave, scaleLen);
 
-  // 2. Phrase start: choose a contour direction + a resting-note target.
-  if (state.phrasePosition === 0) {
-    const distFromCenter = curStep - centerStep;
-    let dir: number;
-    if (Math.abs(distFromCenter) > params.registerHalfSpanSteps * 0.6) {
-      dir = distFromCenter > 0 ? -1 : 1; // turn back toward home near the edges
-    } else {
-      dir = rng() < 0.5 ? -1 : 1;
-    }
-    const reach = 2 + Math.floor(rng() * 4); // span 2..5 steps
-    let target = curStep + dir * reach;
-    target = Math.min(hi, Math.max(lo, target));
-    target = nearestRestingStep(target, lo, hi, scaleLen, resting);
-    next.phraseDir = dir;
-    next.phraseTargetStep = target;
-    next.phraseLength = Math.max(3, Math.abs(target - curStep) + 1 + Math.floor(rng() * 2));
-    next.pendingPhraseEnd = false;
+  // 2. Need a new phrase? Build one (repeat the last shape, or a fresh contour).
+  if (state.phraseIdx >= state.phrase.length) {
+    const { steps, deltas } = buildPhrase(curStep, centerStep, lo, hi, scaleLen, resting, params, rng, state.lastDeltas);
+    next.phrase = steps;
+    next.phraseIdx = 0;
+    next.lastDeltas = deltas;
   }
 
-  // 3. Move toward the target (directed contour); RESTLESSNESS loosens it.
-  const isFinal = state.phrasePosition + 1 >= next.phraseLength;
-  let nextStep: number;
-  if (isFinal) {
-    nextStep = next.phraseTargetStep; // resolve the phrase onto its resting note
-  } else {
-    const toward = Math.sign(next.phraseTargetStep - curStep) || next.phraseDir;
-    const dir = rng() < params.contourStrength ? toward : rng() < 0.5 ? toward : -toward;
-    let magnitude = 1;
-    if (rng() < params.leapProbability) magnitude = 2 + Math.floor(rng() * 2); // 2..3
-    nextStep = curStep + dir * magnitude;
-    if (nextStep > hi) nextStep = hi - (nextStep - hi);
-    if (nextStep < lo) nextStep = lo + (lo - nextStep);
-    nextStep = Math.min(hi, Math.max(lo, nextStep));
-  }
+  // 3. Emit the next note of the phrase.
+  const phraseStart = next.phraseIdx === 0;
+  const nextStep = next.phrase[next.phraseIdx];
+  next.phraseIdx = next.phraseIdx + 1;
+  if (next.phraseIdx >= next.phrase.length) next.pendingPhraseEnd = true;
 
   const { degreeIndex, octave } = stepPosToDegree(nextStep, scaleLen);
   const pitchHz = degreeToHz(scaleCents, tonicHz, degreeIndex, octave);
@@ -161,12 +204,6 @@ export function nextEvent(
   const glideFromHz =
     state.prevPitchHz != null && rng() < params.glideProbability ? state.prevPitchHz : undefined;
 
-  const phraseStart = state.phrasePosition === 0;
-  next.phrasePosition = state.phrasePosition + 1;
-  if (next.phrasePosition >= next.phraseLength) {
-    next.pendingPhraseEnd = true;
-    next.phrasePosition = 0; // the next note begins a fresh contour
-  }
   next.degreeIndex = degreeIndex;
   next.octave = octave;
   next.prevPitchHz = pitchHz;

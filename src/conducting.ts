@@ -31,6 +31,8 @@ export function knobsToParams(knobs: Knobs, tonicHz: number): EngineParams {
     leapProbability: lerp(0.04, 0.35, restless),
     tonicGravity: lerp(0.9, 0.2, restless),
     restingDwell: lerp(2.5, 1.0, restless),
+    // RESTLESSNESS: low = strong motif repetition (melodic); high = fresh/wandering.
+    repeatProb: lerp(0.6, 0.15, restless),
     // SILENCE: rest probability + phrase-pause length.
     pRest: lerp(0.05, 0.45, silence),
     phrasePauseFactor: lerp(1.5, 4.0, silence),

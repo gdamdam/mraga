@@ -29,6 +29,7 @@ describe("knobsToParams", () => {
     expect(roam.ioiJitter).toBeGreaterThan(calm.ioiJitter);
     expect(roam.tonicGravity).toBeLessThan(calm.tonicGravity);
     expect(roam.restingDwell).toBeLessThan(calm.restingDwell);
+    expect(roam.repeatProb).toBeLessThan(calm.repeatProb);
   });
 
   it("SILENCE: higher => more rests, longer phrase pauses", () => {
