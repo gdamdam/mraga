@@ -7,6 +7,7 @@ export type Voice = {
   resume: () => Promise<void>;
   pluck: (freq: number, velocity: number, glideFromFreq?: number) => void;
   setPreset: (params: KSParams) => void;
+  setVolume: (v: number) => void; // master output gain, 0..1
   dispose: () => void;
 };
 
@@ -35,8 +36,13 @@ export async function createVoice(): Promise<Voice> {
   const convolver = ctx.createConvolver();
   convolver.buffer = buildReverbIR(ctx);
 
-  node.connect(dry).connect(ctx.destination);
-  node.connect(convolver).connect(wet).connect(ctx.destination);
+  // Master gain so the UI volume slider scales the whole (dry + wet) output.
+  const master = ctx.createGain();
+  master.gain.value = 0.8;
+
+  node.connect(dry).connect(master);
+  node.connect(convolver).connect(wet).connect(master);
+  master.connect(ctx.destination);
 
   return {
     ctx,
@@ -44,6 +50,9 @@ export async function createVoice(): Promise<Voice> {
     pluck: (freq, velocity, glideFromFreq) =>
       node.port.postMessage({ type: "pluck", freq, velocity, glideFromFreq }),
     setPreset: (params) => node.port.postMessage({ type: "preset", params }),
+    setVolume: (v) => {
+      master.gain.value = Math.max(0, Math.min(1, v));
+    },
     dispose: () => void ctx.close(),
   };
 }

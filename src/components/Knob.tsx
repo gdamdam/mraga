@@ -4,11 +4,12 @@ type Props = {
   highPole: string;
   value: number;
   onChange: (v: number) => void;
+  title?: string; // hover tooltip explaining the control
 };
 
-export function Knob({ label, lowPole, highPole, value, onChange }: Props) {
+export function Knob({ label, lowPole, highPole, value, onChange, title }: Props) {
   return (
-    <div className="knob">
+    <div className="knob" title={title}>
       <div style={{ fontWeight: 600, letterSpacing: 1 }}>{label}</div>
       <input
         type="range"

@@ -5,21 +5,25 @@ type Props = {
 
 const SARGAM = ["Sa", "r", "R", "g", "G", "m", "M", "P", "d", "D", "n", "N"];
 
+// Dots and labels are two grids with the SAME column count, so every label sits
+// directly under its dot regardless of how many degrees the scale has.
 export function PitchLadder({ scaleCents, activeDegree }: Props) {
+  const cols = { gridTemplateColumns: `repeat(${scaleCents.length}, 1fr)` };
   return (
-    <div>
-      <div className="ladder">
+    <div title="Pitch ladder: each column is a scale degree; the lit column is the note sounding now.">
+      <div className="ladder" style={cols}>
         {scaleCents.map((_, i) => (
-          <div
-            key={i}
-            className={"dot" + (i === activeDegree ? " lit" : "")}
-            style={{ height: `${30 + i * 6}px` }}
-          />
+          <div key={i} className="dot-cell">
+            <div
+              className={"dot" + (i === activeDegree ? " lit" : "")}
+              style={{ height: `${30 + i * 6}px` }}
+            />
+          </div>
         ))}
       </div>
-      <div className="row" style={{ marginTop: 4 }}>
+      <div className="ladder-labels" style={cols}>
         {scaleCents.map((_, i) => (
-          <div key={i} className="deg-label" style={{ flex: 1 }}>
+          <div key={i} className="deg-label">
             {SARGAM[i] ?? i}
           </div>
         ))}
