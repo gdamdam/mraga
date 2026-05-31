@@ -1,9 +1,10 @@
 // src/engine.ts
-// Melodic engine: each phrase is a precomputed shape (a directed contour that
-// resolves on a resting note), and phrases REPEAT/SEQUENCE the previous shape —
-// recurring motifs make the line feel intentional rather than random. The
-// pulse is steady; RESTLESSNESS loosens contour/repetition toward a free walk.
-// Pure & seeded: no audio, no Date.
+// Melodic engine: each phrase is a precomputed shape — a directed contour that
+// resolves on a resting note, carrying its OWN rhythm — and phrases REPEAT /
+// SEQUENCE the previous shape (pitch AND rhythm) so recurring motifs are
+// recognizable. The pulse is steady (note values are integer multiples of a
+// base unit, barely humanised when calm). RESTLESSNESS loosens contour,
+// repetition and timing toward a free walk. Pure & seeded: no audio, no Date.
 import { gaussian } from "./rng";
 import {
   degreeToHz,
@@ -45,9 +46,11 @@ export type EngineParams = {
 export type EngineState = {
   degreeIndex: number;
   octave: number;
-  phrase: number[];     // precomputed lattice step positions for the current phrase
-  phraseIdx: number;    // index of the next note to emit within `phrase`
-  lastDeltas: number[]; // step deltas of the last phrase (for repetition/sequence)
+  phrase: number[];       // precomputed lattice step positions for the current phrase
+  phraseRhythm: number[]; // per-note IOI multiple (1 = pulse, 2 = held/double)
+  phraseIdx: number;      // index of the next note to emit within `phrase`
+  lastDeltas: number[];   // step deltas of the last phrase (for repetition/sequence)
+  lastRhythm: number[];   // rhythm of the last phrase (repeated with the motif)
   prevPitchHz: number | null;
   pendingPhraseEnd: boolean;
 };
@@ -57,15 +60,19 @@ export function initState(): EngineState {
     degreeIndex: 0,
     octave: 1,
     phrase: [],
+    phraseRhythm: [],
     phraseIdx: 0,
     lastDeltas: [],
+    lastRhythm: [],
     prevPitchHz: null,
     pendingPhraseEnd: false,
   };
 }
 
+// Steady pulse: an integer multiple of the base unit, only gently humanised
+// (≈metronomic when ioiJitter is small).
 function sampleIoi(params: EngineParams, rng: () => number, mult: number): number {
-  return params.baseIoiSec * mult * Math.exp(params.ioiJitter * gaussian(rng));
+  return params.baseIoiSec * mult * Math.exp(params.ioiJitter * gaussian(rng) * 0.5);
 }
 
 function reflectClamp(sp: number, lo: number, hi: number): number {
@@ -96,9 +103,9 @@ function nearestRestingStep(
   return best;
 }
 
-// Build the next phrase as a sequence of lattice step positions. Either repeats
-// the previous shape (motif/sequence) or generates a fresh directed contour
-// that resolves onto a resting note.
+// Build the next phrase: pitch path (steps + deltas) AND its rhythm. Either
+// repeats the previous motif (pitch + rhythm) or generates a fresh directed
+// contour that resolves onto a resting note.
 function buildPhrase(
   curStep: number,
   centerStep: number,
@@ -109,8 +116,9 @@ function buildPhrase(
   params: EngineParams,
   rng: () => number,
   lastDeltas: number[],
-): { steps: number[]; deltas: number[] } {
-  // Motif repetition: replay the previous phrase's interval shape from here.
+  lastRhythm: number[],
+): { steps: number[]; deltas: number[]; rhythm: number[] } {
+  // Motif repetition: replay the previous shape (pitch + rhythm) from here.
   if (lastDeltas.length >= 2 && rng() < params.repeatProb) {
     const steps: number[] = [];
     let p = curStep;
@@ -119,7 +127,7 @@ function buildPhrase(
       steps.push(p);
     }
     steps[steps.length - 1] = nearestRestingStep(steps[steps.length - 1], lo, hi, scaleLen, resting);
-    return { steps, deltas: lastDeltas };
+    return { steps, deltas: lastDeltas, rhythm: lastRhythm };
   }
 
   // Fresh directed contour toward a resting target.
@@ -132,7 +140,7 @@ function buildPhrase(
       : rng() < 0.5
         ? -1
         : 1;
-  const reach = 2 + Math.floor(rng() * 4); // 2..5 steps
+  const reach = 3 + Math.floor(rng() * 5); // 3..7 steps — longer, singable arcs
   const target = nearestRestingStep(reflectClamp(curStep + dir * reach, lo, hi), lo, hi, scaleLen, resting);
 
   const steps: number[] = [];
@@ -154,7 +162,9 @@ function buildPhrase(
     deltas.push(s - prev);
     prev = s;
   }
-  return { steps, deltas };
+  // Rhythm: mostly the base pulse, occasional double-length (held) notes.
+  const rhythm = steps.map(() => (rng() < params.longNoteProb ? 2 : 1));
+  return { steps, deltas, rhythm };
 }
 
 export function nextEvent(
@@ -171,10 +181,10 @@ export function nextEvent(
   const lo = centerStep - params.registerHalfSpanSteps;
   const hi = centerStep + params.registerHalfSpanSteps;
 
-  // 1. Rest? A breath strongly tends to follow a completed phrase; SILENCE adds
-  //    ambient rests on top.
+  // 1. Rest? A breath sometimes follows a completed phrase; SILENCE adds ambient
+  //    rests on top. (Not every phrase breathes — phrases also flow together.)
   const phraseBreath = state.pendingPhraseEnd;
-  if ((phraseBreath && rng() < 0.7) || rng() < params.pRest) {
+  if ((phraseBreath && rng() < 0.6) || rng() < params.pRest) {
     const phraseEnd = phraseBreath || rng() < 0.3;
     const ioi = sampleIoi(params, rng, phraseEnd ? params.phrasePauseFactor : 1);
     if (phraseEnd) next.pendingPhraseEnd = false;
@@ -183,19 +193,25 @@ export function nextEvent(
 
   const curStep = degreeToStepPos(state.degreeIndex, state.octave, scaleLen);
 
-  // 2. Need a new phrase? Build one (repeat the last shape, or a fresh contour).
+  // 2. Need a new phrase? Build one (repeat the last motif, or a fresh contour).
   if (state.phraseIdx >= state.phrase.length) {
-    const { steps, deltas } = buildPhrase(curStep, centerStep, lo, hi, scaleLen, resting, params, rng, state.lastDeltas);
-    next.phrase = steps;
+    const built = buildPhrase(
+      curStep, centerStep, lo, hi, scaleLen, resting, params, rng, state.lastDeltas, state.lastRhythm,
+    );
+    next.phrase = built.steps;
+    next.phraseRhythm = built.rhythm;
     next.phraseIdx = 0;
-    next.lastDeltas = deltas;
+    next.lastDeltas = built.deltas;
+    next.lastRhythm = built.rhythm;
   }
 
-  // 3. Emit the next note of the phrase.
+  // 3. Emit the next note of the phrase, with its motif-bound rhythm.
   const phraseStart = next.phraseIdx === 0;
   const nextStep = next.phrase[next.phraseIdx];
+  const mult = next.phraseRhythm[next.phraseIdx] ?? 1;
   next.phraseIdx = next.phraseIdx + 1;
-  if (next.phraseIdx >= next.phrase.length) next.pendingPhraseEnd = true;
+  // Sometimes breathe after a completed phrase; sometimes flow into the next.
+  if (next.phraseIdx >= next.phrase.length) next.pendingPhraseEnd = rng() < 0.6;
 
   const { degreeIndex, octave } = stepPosToDegree(nextStep, scaleLen);
   const pitchHz = degreeToHz(scaleCents, tonicHz, degreeIndex, octave);
@@ -210,8 +226,7 @@ export function nextEvent(
 
   const baseVel = 0.6 + rng() * 0.2;
   const velocity = Math.min(1, baseVel + (phraseStart ? 0.12 : 0) + restingStrength * 0.1);
-  const longNote = rng() < params.longNoteProb;
-  const ioiSec = sampleIoi(params, rng, longNote ? 2 : 1);
+  const ioiSec = sampleIoi(params, rng, mult);
 
   return {
     event: {

@@ -51,7 +51,7 @@ export function App() {
   const [linkInput, setLinkInput] = useState("");
   const [playing, setPlaying] = useState(false);
   const [activeDegree, setActiveDegree] = useState<number | null>(null);
-  const [knobs, setKnobs] = useState<Knobs>({ density: 0.5, register: 0.5, restlessness: 0.2, silence: 0.4 });
+  const [knobs, setKnobs] = useState<Knobs>({ density: 0.5, register: 0.5, restlessness: 0.2, silence: 0.25 });
   const [voiceId, setVoiceId] = useState<VoiceId>(loadVoiceId);
   const [volume, setVolume] = useState<number>(loadVolume);
   const [octaveShift, setOctaveShift] = useState<number>(loadOctave);
