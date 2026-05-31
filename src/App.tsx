@@ -73,6 +73,7 @@ export function App() {
   const titleRef = useRef<HTMLHeadingElement>(null);
   const voiceRef = useRef<Voice | null>(null);
   const schedRef = useRef<Scheduler | null>(null);
+  const playingRef = useRef(false); // guards async ladder-light timeouts after STOP
   const stateRef = useRef<EngineState>(initState());
   const rngRef = useRef<() => number>(makeRng(seed));
   const knobsRef = useRef(knobs);
@@ -289,6 +290,7 @@ export function App() {
   async function togglePlay() {
     if (playing) {
       schedRef.current?.stop();
+      playingRef.current = false;
       setPlaying(false);
       setActiveDegree(null);
       return;
@@ -314,7 +316,7 @@ export function App() {
         voiceRef.current!.pluck(e.pitchHz, e.velocity, e.glideFromHz);
         midiOutRef.current?.sendNote(e.pitchHz, e.velocity, (e.durationHint || 0.5) * 1000);
         const delayMs = Math.max(0, (time - voiceRef.current!.ctx.currentTime) * 1000);
-        setTimeout(() => setActiveDegree(e.degreeIndex), delayMs);
+        setTimeout(() => { if (playingRef.current) setActiveDegree(e.degreeIndex); }, delayMs);
       },
       onRest: () => {},
       // Onset grid: Ableton bridge when linked+connected; else the internal BPM
@@ -326,6 +328,7 @@ export function App() {
       },
     });
     schedRef.current = sched;
+    playingRef.current = true;
     sched.run(25);
     setPlaying(true);
   }

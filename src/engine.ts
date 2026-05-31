@@ -167,15 +167,15 @@ function buildPhrase(
   }
 
   // Fresh directed contour toward a resting target (on the FOCUS palette).
+  // Tonic gravity (from RESTLESSNESS) gives a graded pull back toward the
+  // register centre — stronger when calm and when further from home.
   const distFromCenter = curStep - centerStep;
-  const dir =
-    Math.abs(distFromCenter) > params.registerHalfSpanSteps * 0.6
-      ? distFromCenter > 0
-        ? -1
-        : 1
-      : rng() < 0.5
-        ? -1
-        : 1;
+  const towardCenter = distFromCenter > 0 ? -1 : 1;
+  const homeBias = Math.min(
+    0.95,
+    Math.max(0.05, 0.5 + params.tonicGravity * (Math.abs(distFromCenter) / params.registerHalfSpanSteps) * 0.5),
+  );
+  const dir = rng() < homeBias ? towardCenter : -towardCenter;
   const reach = 3 + Math.floor(rng() * 5); // 3..7 steps — longer, singable arcs
   const target = snapToAllowed(
     nearestRestingStep(reflectClamp(curStep + dir * reach, lo, hi), lo, hi, scaleLen, resting), allowed, scaleLen, lo, hi,
