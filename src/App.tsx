@@ -11,6 +11,7 @@ import { VOICE_IDS, VOICE_LABELS, getPreset, type VoiceId } from "./voicePresets
 import { LinkClock } from "./linkClock";
 import { enableLinkBridge, onLinkState, type LinkState } from "./engine/linkBridge";
 import { THEME_IDS, THEMES, applyTheme, loadThemeId, type ThemeId } from "./themes";
+import { sceneToUrl, sceneFromUrl, type MragaScene } from "./mragaScene";
 
 // Block-art wordmark in mdrone's style (rendered with the .title-art glow).
 const LOGO = "█▀▄▀█ █▀█ █▀█ █▀▀ █▀█\n█ ▀ █ █▀▄ █▀█ █▄█ █▀█";
@@ -60,6 +61,7 @@ export function App() {
     tempo: 120, beat: 0, phase: 0, playing: false, peers: 0, clients: 0, connected: false,
   });
   const [theme, setTheme] = useState<ThemeId>(loadThemeId);
+  const [shared, setShared] = useState(false);
 
   const titleRef = useRef<HTMLHeadingElement>(null);
   const voiceRef = useRef<Voice | null>(null);
@@ -167,6 +169,71 @@ export function App() {
     if (mode === "bpm") seedInternalClock();
   }
 
+  // Snapshot the full sound for sharing.
+  function currentScene(): MragaScene {
+    return {
+      v: 1,
+      knobs,
+      voice: voiceId,
+      octave: octaveShift,
+      volume,
+      timing: timingMode,
+      bpm,
+      theme,
+      tuning: { tonicHz: tuning.tonicHz, scaleCents: tuning.scaleCents, label: tuning.label },
+    };
+  }
+
+  // Restore state from a shared scene, persisting and applying side-effects so
+  // the running engine / audio reflect the loaded sound immediately.
+  function applyScene(s: MragaScene) {
+    if (s.knobs) setKnobs(s.knobs);
+    if (s.voice) {
+      setVoiceId(s.voice as VoiceId);
+      localStorage.setItem(VOICE_KEY, s.voice);
+      voiceRef.current?.setPreset(getPreset(s.voice as VoiceId));
+    }
+    if (typeof s.octave === "number") {
+      setOctaveShift(s.octave);
+      localStorage.setItem(OCT_KEY, String(s.octave));
+    }
+    if (typeof s.volume === "number") {
+      setVolume(s.volume);
+      localStorage.setItem(VOL_KEY, String(s.volume));
+      voiceRef.current?.setVolume(s.volume);
+    }
+    if (typeof s.bpm === "number") {
+      setBpm(s.bpm);
+      bpmRef.current = s.bpm;
+      localStorage.setItem(BPM_KEY, String(s.bpm));
+      seedInternalClock();
+    }
+    if (s.theme) setTheme(s.theme as ThemeId); // the theme effect applies it
+    if (s.timing) {
+      setTimingMode(s.timing);
+      timingModeRef.current = s.timing;
+      localStorage.setItem(TIMING_KEY, s.timing);
+      enableLinkBridge(s.timing === "link");
+    }
+    if (s.tuning) {
+      setTuning({ tonicHz: s.tuning.tonicHz, scaleCents: s.tuning.scaleCents, label: s.tuning.label });
+    }
+  }
+
+  // On mount, load a shared scene if the URL carries one (?s=…).
+  useEffect(() => {
+    const s = sceneFromUrl(window.location.href);
+    if (s) applyScene(s);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function shareScene() {
+    const url = sceneToUrl(currentScene(), window.location.origin + window.location.pathname);
+    navigator.clipboard?.writeText(url);
+    setShared(true);
+    setTimeout(() => setShared(false), 1500);
+  }
+
   async function togglePlay() {
     if (playing) {
       schedRef.current?.stop();
@@ -226,6 +293,14 @@ export function App() {
           <div className="tagline">a conducted line over the drone</div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <button
+            type="button"
+            className="chip-btn"
+            onClick={shareScene}
+            title="Copy a link that restores this exact sound (voice, knobs, octave, volume, timing, theme, tuning)."
+          >
+            {shared ? "copied ✓" : "SHARE"}
+          </button>
           <label className="sel" title="Colour theme — toggle to taste.">
             THEME
             <select value={theme} aria-label="theme" onChange={(e) => setTheme(e.target.value as ThemeId)}>
