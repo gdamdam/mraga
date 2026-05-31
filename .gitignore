@@ -5,3 +5,4 @@ playwright-report
 src/engine/voiceProcessor.js
 tsconfig.tsbuildinfo
 .claude/
+.vite/
