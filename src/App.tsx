@@ -13,6 +13,7 @@ import { enableLinkBridge, onLinkState, type LinkState } from "./engine/linkBrid
 import { THEME_IDS, THEMES, applyTheme, loadThemeId, type ThemeId } from "./themes";
 import { sceneToUrl, sceneFromUrl, type MragaScene } from "./mragaScene";
 import { loadPresets, savePresets, upsertPreset, deletePreset, type Preset } from "./presets";
+import { createMidiOut, type MidiOut } from "./midi";
 
 // Block-art wordmark in mdrone's style (rendered with the .title-art glow).
 const LOGO = "█▀▄▀█ █▀█ █▀█ █▀▀ █▀█\n█ ▀ █ █▀▄ █▀█ █▄█ █▀█";
@@ -56,6 +57,8 @@ export function App() {
   const [seed, setSeed] = useState<number>(() => Date.now() & 0xffff);
   const [presets, setPresets] = useState<Preset[]>(loadPresets);
   const [selectedPreset, setSelectedPreset] = useState("");
+  const [midiName, setMidiName] = useState<string | null>(null);
+  const midiOutRef = useRef<MidiOut | null>(null);
   const [voiceId, setVoiceId] = useState<VoiceId>(loadVoiceId);
   const [volume, setVolume] = useState<number>(loadVolume);
   const [octaveShift, setOctaveShift] = useState<number>(loadOctave);
@@ -257,6 +260,18 @@ export function App() {
     setSelectedPreset("");
   }
 
+  async function toggleMidi() {
+    if (midiOutRef.current) {
+      midiOutRef.current.dispose();
+      midiOutRef.current = null;
+      setMidiName(null);
+      return;
+    }
+    const out = await createMidiOut();
+    midiOutRef.current = out;
+    setMidiName(out ? out.name : "no device / unsupported");
+  }
+
   // On mount, load a shared scene if the URL carries one (?s=…).
   useEffect(() => {
     const s = sceneFromUrl(window.location.href);
@@ -297,6 +312,7 @@ export function App() {
       },
       onNote: (e, time) => {
         voiceRef.current!.pluck(e.pitchHz, e.velocity, e.glideFromHz);
+        midiOutRef.current?.sendNote(e.pitchHz, e.velocity, (e.durationHint || 0.5) * 1000);
         const delayMs = Math.max(0, (time - voiceRef.current!.ctx.currentTime) * 1000);
         setTimeout(() => setActiveDegree(e.degreeIndex), delayMs);
       },
@@ -443,6 +459,15 @@ export function App() {
           </select>
           {timingMode === "link" && <span style={{ marginLeft: 6 }}>· {linkStatus}</span>}
         </label>
+
+        <button
+          type="button"
+          className="chip-btn"
+          onClick={toggleMidi}
+          title="Send the generated notes to an external MIDI synth/DAW (microtonal via pitch-bend). Click to connect the first available output."
+        >
+          MIDI {midiName ? `· ${midiName}` : "off"}
+        </button>
       </div>
     </main>
   );
