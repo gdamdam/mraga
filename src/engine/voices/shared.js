@@ -12,6 +12,7 @@ class KSVoice {
     this.damp = 0.4975;
     this.gain = 0;
     this.last = 0;
+    this.lp = 0; // loop-lowpass state (brightness shapes the sustained tone)
     // Glide state (declared; portamento rendering is a future enhancement).
     this.glideSamples = 0;
     this.glideFromLen = 0;
@@ -45,6 +46,7 @@ class KSVoice {
     this.gain = velocity;
     this.damp = this.damping;
     this.last = 0;
+    this.lp = 0;
     if (glideFromFreq && glideFromFreq > 0) {
       this.glideFromLen = Math.max(2, Math.round(this.sr / glideFromFreq));
       this.glideSamples = Math.round(this.sr * 0.08); // 80ms portamento
@@ -57,8 +59,12 @@ class KSVoice {
     if (!this.active) return 0;
     const cur = this.buf[this.idx];
     const nextIdx = (this.idx + 1) % this.len;
-    const avg = this.damp * (cur + this.last);
-    this.last = cur;
+    // Loop lowpass: brightness sets how much treble survives each pass, so it
+    // colours the SUSTAINED tone (dark koto/mallet <-> bright santoor/qanun),
+    // not just the attack. brightness=1 => lp=cur => identical to the MVP loop.
+    this.lp = this.brightness * cur + (1 - this.brightness) * this.lp;
+    const avg = this.damp * (this.lp + this.last);
+    this.last = this.lp;
     this.buf[this.idx] = avg;
     this.idx = nextIdx;
     this.gain *= this.decay; // overall decay

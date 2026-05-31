@@ -23,13 +23,15 @@ export const VOICE_LABELS: Record<VoiceId, string> = {
 };
 
 export const VOICE_PRESETS: Record<VoiceId, KSParams> = {
-  // santoor == MVP baseline voice.
-  santoor: { brightness: 1.0, damping: 0.4975, decay: 0.99995, jawari: 0 },
-  koto: { brightness: 0.6, damping: 0.499, decay: 0.99997, jawari: 0 },
-  sitar: { brightness: 0.8, damping: 0.499, decay: 0.99997, jawari: 0.7 },
-  mallet: { brightness: 0.35, damping: 0.494, decay: 0.9999, jawari: 0 },
-  qanun: { brightness: 0.95, damping: 0.4965, decay: 0.99993, jawari: 0.15 },
-  kalimba: { brightness: 0.7, damping: 0.495, decay: 0.99991, jawari: 0.2 },
+  // santoor == MVP baseline voice (brightness 1.0 => no loop-lowpass colouring).
+  // brightness now drives a lowpass INSIDE the feedback loop, so it shapes the
+  // sustained timbre — the values are spread widely for audibly distinct voices.
+  santoor: { brightness: 1.0, damping: 0.4975, decay: 0.99995, jawari: 0 },    // bright, medium ring
+  koto: { brightness: 0.4, damping: 0.498, decay: 0.99997, jawari: 0 },        // dark, long, soft
+  sitar: { brightness: 0.75, damping: 0.498, decay: 0.99996, jawari: 0.85 },   // bright + heavy jawari buzz
+  mallet: { brightness: 0.18, damping: 0.494, decay: 0.9996, jawari: 0 },      // very dark, short struck bar
+  qanun: { brightness: 0.9, damping: 0.496, decay: 0.99985, jawari: 0.25 },    // bright, dry, slight buzz
+  kalimba: { brightness: 0.5, damping: 0.495, decay: 0.9998, jawari: 0.4 },    // mid, short, bell-ish buzz
 };
 
 export function getPreset(id: string): KSParams {
