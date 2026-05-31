@@ -26,6 +26,8 @@ jobs:
       - run: npm ci
       - run: npm run build # build:worklet + tsc -b + vite build → dist/
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true # auto-enable Pages (Actions build type) on first run
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
