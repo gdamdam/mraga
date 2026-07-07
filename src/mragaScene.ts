@@ -18,6 +18,10 @@ export type MragaScene = {
   theme: string;   // ThemeId
   seed: number;    // PRNG seed (reproducible improvisation)
   tuning: { tonicHz: number; scaleCents: number[]; label: string };
+  // Added in 0.2 — decoded with defaults so older shared scenes stay valid.
+  raga: string;       // raga id, or "" for free (no grammar)
+  drone: boolean;     // built-in tanpura on/off
+  droneLevel: number; // tanpura level 0..1
 };
 
 // ---------------------------------------------------------------------------
@@ -118,6 +122,11 @@ export function decodeScene(payload: string): MragaScene | null {
     // seed added later — default to 0 (deterministic) for older shared scenes.
     const seed = isFiniteNumber(raw.seed) ? Math.round(raw.seed as number) : 0;
 
+    // 0.2 additions — all defaulted for older payloads.
+    const raga = typeof raw.raga === "string" ? raw.raga : "";
+    const drone = raw.drone === true;
+    const droneLevel = isFiniteNumber(raw.droneLevel) ? clamp(raw.droneLevel as number, 0, 1) : 0.5;
+
     return {
       v: 1,
       knobs,
@@ -129,6 +138,9 @@ export function decodeScene(payload: string): MragaScene | null {
       theme: raw.theme,
       seed,
       tuning,
+      raga,
+      drone,
+      droneLevel,
     };
   } catch {
     return null;

@@ -8,6 +8,11 @@ import { makeRng } from "./rng";
 import { Scheduler } from "./scheduler";
 import { createVoice, type Voice } from "./voice";
 import { VOICE_IDS, VOICE_LABELS, getPreset, type VoiceId } from "./voicePresets";
+import { Tanpura } from "./tanpura";
+import { RAGA_IDS, RAGAS, getRaga, ragaMasks, ragaBoost } from "./ragas";
+import { arcKnobs, arcPhaseAt, ARC_DURATIONS_MIN, type ArcPhase } from "./arc";
+import { encodeWav } from "./recorder";
+import { createMbusClient, type MbusClient, type Publication, type BridgeState } from "./transport/mbus";
 import { LinkClock } from "./linkClock";
 import { enableLinkBridge, onLinkState, type LinkState } from "./engine/linkBridge";
 import { THEME_IDS, THEMES, applyTheme, loadThemeId, type ThemeId } from "./themes";
@@ -23,6 +28,10 @@ const TIMING_KEY = "mraga-timing";
 const BPM_KEY = "mraga-bpm";
 const VOL_KEY = "mraga-volume";
 const OCT_KEY = "mraga-octave";
+const RAGA_KEY = "mraga-raga";
+const DRONE_KEY = "mraga-drone";
+const DRONE_LVL_KEY = "mraga-drone-level";
+const ARC_KEY = "mraga-arc";
 
 type TimingMode = "free" | "bpm" | "link";
 const TIMING_MODES: TimingMode[] = ["free", "bpm", "link"];
@@ -47,6 +56,21 @@ function loadOctave(): number {
   const v = parseInt(localStorage.getItem(OCT_KEY) ?? "", 10);
   return Number.isFinite(v) ? Math.max(-2, Math.min(2, v)) : -1;
 }
+function loadRagaId(): string {
+  const stored = localStorage.getItem(RAGA_KEY) ?? "";
+  return getRaga(stored) ? stored : "";
+}
+function loadDroneOn(): boolean {
+  return localStorage.getItem(DRONE_KEY) === "1";
+}
+function loadDroneLevel(): number {
+  const v = parseFloat(localStorage.getItem(DRONE_LVL_KEY) ?? "");
+  return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0.5;
+}
+function loadArcMin(): number {
+  const v = parseInt(localStorage.getItem(ARC_KEY) ?? "", 10);
+  return ARC_DURATIONS_MIN.includes(v) ? v : 0;
+}
 
 export function App() {
   const [tuning, setTuning] = useState<PortableTuning>(DEFAULT_TUNING);
@@ -69,6 +93,15 @@ export function App() {
   });
   const [theme, setTheme] = useState<ThemeId>(loadThemeId);
   const [shared, setShared] = useState(false);
+  const [ragaId, setRagaId] = useState<string>(loadRagaId);
+  const [droneOn, setDroneOn] = useState<boolean>(loadDroneOn);
+  const [droneLevel, setDroneLevel] = useState<number>(loadDroneLevel);
+  const [arcMin, setArcMin] = useState<number>(loadArcMin);
+  const [arcStatus, setArcStatus] = useState<{ phase: ArcPhase; pct: number } | null>(null);
+  const [pullDegree, setPullDegree] = useState<number | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [mbusOn, setMbusOn] = useState(false); // session-transient by convention
+  const [mbusState, setMbusState] = useState<BridgeState>("idle");
 
   const titleRef = useRef<HTMLHeadingElement>(null);
   const voiceRef = useRef<Voice | null>(null);
@@ -84,12 +117,27 @@ export function App() {
   const timingModeRef = useRef(timingMode);
   const bpmRef = useRef(bpm);
   const octaveShiftRef = useRef(octaveShift);
+  const ragaRef = useRef(ragaId);
+  const pullRef = useRef<number | null>(pullDegree);
+  const droneOnRef = useRef(droneOn);
+  const droneLevelRef = useRef(droneLevel);
+  const arcMinRef = useRef(arcMin);
+  const arcRef = useRef<{ t0: number; durSec: number } | null>(null); // live arc window (audio clock)
+  const tanpuraRef = useRef<Tanpura | null>(null);
+  if (!tanpuraRef.current) tanpuraRef.current = new Tanpura();
+  const mbusClientRef = useRef<MbusClient | null>(null);
+  const mbusPubRef = useRef<Publication | null>(null);
   knobsRef.current = knobs;
   tuningRef.current = tuning;
   linkActiveRef.current = timingMode === "link" && linkState.connected;
   timingModeRef.current = timingMode;
   bpmRef.current = bpm;
   octaveShiftRef.current = octaveShift;
+  ragaRef.current = ragaId;
+  pullRef.current = pullDegree;
+  droneOnRef.current = droneOn;
+  droneLevelRef.current = droneLevel;
+  arcMinRef.current = arcMin;
 
   // Seed the internal BPM grid from the current audio clock (no-op before audio).
   function seedInternalClock() {
@@ -189,6 +237,108 @@ export function App() {
     if (mode === "bpm") seedInternalClock();
   }
 
+  async function ensureVoice(): Promise<Voice> {
+    if (!voiceRef.current) voiceRef.current = await createVoice();
+    await voiceRef.current.resume();
+    return voiceRef.current;
+  }
+
+  function selectRaga(id: string) {
+    const valid = getRaga(id) ? id : "";
+    setRagaId(valid);
+    ragaRef.current = valid;
+    localStorage.setItem(RAGA_KEY, valid);
+  }
+
+  // --- tanpura drone (independent of melody PLAY/STOP) ---
+  function startDrone(v: Voice) {
+    v.setDroneLevel(droneLevelRef.current);
+    tanpuraRef.current!.start(v, () => ({
+      tonicHz: tuningRef.current.tonicHz, // unshifted: the drone holds the room's Sa
+      scaleCents: tuningRef.current.scaleCents,
+    }));
+  }
+
+  async function toggleDrone() {
+    const next = !droneOn;
+    setDroneOn(next);
+    droneOnRef.current = next;
+    localStorage.setItem(DRONE_KEY, next ? "1" : "0");
+    if (next) startDrone(await ensureVoice());
+    else tanpuraRef.current!.stop();
+  }
+
+  function changeDroneLevel(v: number) {
+    setDroneLevel(v);
+    droneLevelRef.current = v;
+    localStorage.setItem(DRONE_LVL_KEY, String(v));
+    voiceRef.current?.setDroneLevel(v);
+  }
+
+  // --- performance arc ---
+  function changeArc(min: number) {
+    setArcMin(min);
+    arcMinRef.current = min;
+    localStorage.setItem(ARC_KEY, String(min));
+    // Changing the arc while playing (re)starts it from now.
+    if (playingRef.current && voiceRef.current) {
+      arcRef.current = min > 0 ? { t0: voiceRef.current.ctx.currentTime, durSec: min * 60 } : null;
+    }
+  }
+
+  // --- conducting: tap a ladder degree to pull the line toward it ---
+  function conduct(i: number) {
+    setPullDegree((p) => {
+      const next = p === i ? null : i;
+      pullRef.current = next;
+      return next;
+    });
+  }
+
+  // --- WAV recording ---
+  async function toggleRec() {
+    if (!recording) {
+      const v = await ensureVoice();
+      v.startRecording();
+      setRecording(true);
+      return;
+    }
+    setRecording(false);
+    const v = voiceRef.current;
+    if (!v) return;
+    const { left, right, sampleRate } = await v.stopRecording();
+    if (left.length === 0) return; // nothing captured
+    const blob = new Blob([encodeWav(left, right, sampleRate)], { type: "audio/wav" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `mraga-${seed.toString(16)}.wav`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  }
+
+  // --- mbus publishing (session-transient, off by default per suite convention) ---
+  async function toggleMbus() {
+    if (!mbusOn) await ensureVoice(); // so the publish tap exists
+    setMbusOn((v) => !v);
+  }
+
+  // Reconcile the mbus intent with the live graph (mirrors mvox's pattern).
+  useEffect(() => {
+    const tap = voiceRef.current?.getPublishTap() ?? null;
+    if (mbusPubRef.current && !mbusOn) {
+      mbusPubRef.current.stop();
+      mbusPubRef.current = null;
+    }
+    if (mbusOn && tap && !mbusPubRef.current) {
+      mbusClientRef.current ??= createMbusClient();
+      mbusClientRef.current.connect();
+      mbusPubRef.current = mbusClientRef.current.publishOutput(tap, "mraga");
+    }
+    if (!mbusOn) mbusClientRef.current?.disconnect();
+    return mbusClientRef.current?.onState(setMbusState);
+  }, [mbusOn]);
+
   // Snapshot the full sound for sharing.
   function currentScene(): MragaScene {
     return {
@@ -202,6 +352,9 @@ export function App() {
       theme,
       seed,
       tuning: { tonicHz: tuning.tonicHz, scaleCents: tuning.scaleCents, label: tuning.label },
+      raga: ragaId,
+      drone: droneOn,
+      droneLevel,
     };
   }
 
@@ -238,6 +391,17 @@ export function App() {
     }
     if (s.tuning) {
       setTuning({ tonicHz: s.tuning.tonicHz, scaleCents: s.tuning.scaleCents, label: s.tuning.label });
+    }
+    if (typeof s.raga === "string") selectRaga(s.raga);
+    if (typeof s.droneLevel === "number") changeDroneLevel(Math.max(0, Math.min(1, s.droneLevel)));
+    if (typeof s.drone === "boolean") {
+      setDroneOn(s.drone);
+      droneOnRef.current = s.drone;
+      localStorage.setItem(DRONE_KEY, s.drone ? "1" : "0");
+      // Audio may not exist yet (URL load before any gesture): the drone then
+      // starts on the next PLAY. With a live voice, apply immediately.
+      if (s.drone && voiceRef.current) startDrone(voiceRef.current);
+      if (!s.drone) tanpuraRef.current!.stop();
     }
     if (typeof s.seed === "number") reseed(s.seed);
   }
@@ -277,6 +441,22 @@ export function App() {
     setMidiName(out ? out.name : "no device / unsupported");
   }
 
+  // Arc progress readout (1 Hz — display only; the pull reads the refs).
+  useEffect(() => {
+    if (!playing || arcMin <= 0) {
+      setArcStatus(null);
+      return;
+    }
+    const id = setInterval(() => {
+      const arc = arcRef.current;
+      const v = voiceRef.current;
+      if (!arc || !v) return;
+      const t = Math.max(0, Math.min(1, (v.ctx.currentTime - arc.t0) / arc.durSec));
+      setArcStatus({ phase: arcPhaseAt(t), pct: Math.round(t * 100) });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [playing, arcMin]);
+
   // On mount, load a shared scene if the URL carries one (?s=…).
   useEffect(() => {
     const s = sceneFromUrl(window.location.href);
@@ -298,28 +478,61 @@ export function App() {
     }
   }
 
+  function stopPlayback() {
+    schedRef.current?.stop();
+    playingRef.current = false;
+    setPlaying(false);
+    setActiveDegree(null);
+    arcRef.current = null;
+    setArcStatus(null);
+  }
+
   async function togglePlay() {
     if (playing) {
-      schedRef.current?.stop();
-      playingRef.current = false;
-      setPlaying(false);
-      setActiveDegree(null);
+      stopPlayback();
       return;
     }
-    if (!voiceRef.current) voiceRef.current = await createVoice();
-    await voiceRef.current.resume();
-    voiceRef.current.setPreset(getPreset(voiceId));
-    voiceRef.current.setVolume(volume);
+    const voice = await ensureVoice();
+    voice.setPreset(getPreset(voiceId));
+    voice.setVolume(volume);
+    if (droneOnRef.current && !tanpuraRef.current!.running) startDrone(voice);
     seedInternalClock();
     stateRef.current = initState();
+    arcRef.current = arcMinRef.current > 0
+      ? { t0: voice.ctx.currentTime, durSec: arcMinRef.current * 60 }
+      : null;
     const sched = new Scheduler({
       now: () => voiceRef.current!.ctx.currentTime,
       lookaheadSec: 0.12,
       pull: () => {
         // Octave selector transposes the whole voice by shifting the tonic.
         const tonicHz = tuningRef.current.tonicHz * Math.pow(2, octaveShiftRef.current);
-        const params = knobsToParams(knobsRef.current, tonicHz);
-        const r = nextEvent(stateRef.current, tuningRef.current.scaleCents, tonicHz, params, rngRef.current);
+        // Performance arc: override the driven knobs along the alap→jor→jhala
+        // trajectory; when it completes, end the performance.
+        let kn = knobsRef.current;
+        const arc = arcRef.current;
+        if (arc) {
+          const t = (voiceRef.current!.ctx.currentTime - arc.t0) / arc.durSec;
+          if (t >= 1) {
+            arcRef.current = null;
+            setTimeout(stopPlayback, 0); // outside the tick — let scheduled notes ring out
+          }
+          kn = { ...kn, ...arcKnobs(Math.min(1, t)) };
+        }
+        const scale = tuningRef.current.scaleCents;
+        const params = knobsToParams(kn, tonicHz);
+        // Raga grammar (only defined on a 12-degree lattice).
+        const raga = getRaga(ragaRef.current);
+        if (raga && scale.length === 12) {
+          const masks = ragaMasks(raga, 12, params.focus);
+          params.arohaMask = masks.aroha;
+          params.avarohaMask = masks.avaroha;
+          params.degreeBoost = ragaBoost(raga, 12);
+          params.pakadSteps = raga.pakad;
+          params.pakadProb = 0.35;
+        }
+        params.pullDegree = pullRef.current;
+        const r = nextEvent(stateRef.current, scale, tonicHz, params, rngRef.current);
         stateRef.current = r.state;
         return r.event;
       },
@@ -345,6 +558,15 @@ export function App() {
   }
 
   const octLabel = octaveShift > 0 ? `+${octaveShift}` : String(octaveShift);
+  // Raga palette for the ladder display: union of ascent+descent (untrimmed).
+  const activeRaga = getRaga(ragaId);
+  const ragaAllowed =
+    activeRaga && tuning.scaleCents.length === 12
+      ? (() => {
+          const m = ragaMasks(activeRaga, 12, 0);
+          return m.aroha.map((v, i) => v || m.avaroha[i]);
+        })()
+      : null;
   const linkStatus = linkState.connected
     ? `${linkState.tempo.toFixed(1)} BPM · ${linkState.peers} peer${linkState.peers === 1 ? "" : "s"}`
     : "searching…";
@@ -425,7 +647,13 @@ export function App() {
         </button>
       </div>
 
-      <PitchLadder scaleCents={tuning.scaleCents} activeDegree={activeDegree} />
+      <PitchLadder
+        scaleCents={tuning.scaleCents}
+        activeDegree={activeDegree}
+        allowedDegrees={ragaAllowed}
+        pulledDegree={pullDegree}
+        onSelectDegree={conduct}
+      />
 
       <div className="knobs">
         <Knob label="DENSITY" lowPole="sparse" highPole="busy" value={knobs.density} onChange={(v) => setKnobs({ ...knobs, density: v })} title="How often notes occur — sparse to busy (the note rate)." />
@@ -435,6 +663,70 @@ export function App() {
         <Knob label="RHYTHM" lowPole="loose" highPole="tight" value={knobs.rhythm ?? 0.8} onChange={(v) => setKnobs({ ...knobs, rhythm: v })} title="Timing feel — loose/rubato to a tight, metronomic pulse (independent of the melody)." />
         <Knob label="THEME" lowPole="free" highPole="locked" value={knobs.theme ?? 0.7} onChange={(v) => setKnobs({ ...knobs, theme: v })} title="Motif lock — invent new material (free) ↔ keep repeating one recurring figure (locked). Higher = less random." />
         <Knob label="FOCUS" lowPole="wide" highPole="tight" value={knobs.focus ?? 0} onChange={(v) => setKnobs({ ...knobs, focus: v })} title="Note palette — all scale degrees (wide) ↔ a few characteristic notes (tight). Fewer notes = more coherent." />
+      </div>
+
+      <div className="row footer chip">
+        <label className="sel" title="Raga grammar — constrains ascent/descent to the raga's notes, leans on its vadi/samvadi, and weaves in its signature phrase (pakad). free = no grammar (tuning + FOCUS only).">
+          RAGA
+          <select value={ragaId} aria-label="raga" onChange={(e) => selectRaga(e.target.value)}>
+            <option value="">free</option>
+            {RAGA_IDS.map((id) => (
+              <option key={id} value={id}>{RAGAS[id].label}</option>
+            ))}
+          </select>
+          {activeRaga && <span style={{ marginLeft: 6 }} className="deg-label">· {activeRaga.mood}</span>}
+        </label>
+
+        <button
+          type="button"
+          className={"chip-btn" + (droneOn ? " on" : "")}
+          onClick={toggleDrone}
+          title="Built-in tanpura (Pa Sa Sa Sa̠ cycle on the scale's own fifth) — mraga stands alone, no mdrone tab needed. Plays independently of ▶/■."
+        >
+          ◉ drone {droneOn ? "on" : "off"}
+        </button>
+        {droneOn && (
+          <span className="vol" title="Tanpura level.">
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={droneLevel}
+              aria-label="drone level"
+              onChange={(e) => changeDroneLevel(parseFloat(e.target.value))}
+            />
+          </span>
+        )}
+
+        <label className="sel" title="Performance arc — density, pulse and register follow a slow alap → jor → jhala trajectory; playback ends when the arc completes.">
+          ARC
+          <select value={String(arcMin)} aria-label="performance arc" onChange={(e) => changeArc(parseInt(e.target.value, 10))}>
+            <option value="0">off</option>
+            {ARC_DURATIONS_MIN.map((m) => (
+              <option key={m} value={String(m)}>{m} min</option>
+            ))}
+          </select>
+          {arcStatus && <span style={{ marginLeft: 6 }}>· {arcStatus.phase} {arcStatus.pct}%</span>}
+        </label>
+
+        <button
+          type="button"
+          className={"chip-btn" + (recording ? " on" : "")}
+          onClick={toggleRec}
+          title="Record the master output (melody + drone + reverb); stopping downloads a 16-bit stereo WAV."
+        >
+          {recording ? "■ rec…" : "● rec"}
+        </button>
+
+        <button
+          type="button"
+          className={"chip-btn" + (mbusOn ? " on" : "")}
+          onClick={toggleMbus}
+          title="Publish mraga's audio to the mbus patchbay so other m-suite tabs can subscribe (needs the bridge companion; Chrome/Firefox). Off by default, never persisted."
+        >
+          ⇄ mbus{mbusOn ? (mbusState === "connected" ? " · live" : " · searching…") : " off"}
+        </button>
       </div>
 
       <div className="row footer chip">

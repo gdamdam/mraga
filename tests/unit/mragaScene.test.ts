@@ -23,6 +23,9 @@ const SAMPLE_SCENE: MragaScene = {
     scaleCents: [0, 204, 386, 498, 702, 884, 1088],
     label: "Just Major",
   },
+  raga: "yaman",
+  drone: true,
+  droneLevel: 0.6,
 };
 
 // ---------------------------------------------------------------------------
@@ -190,5 +193,21 @@ describe("sanitization", () => {
   it("rejects tonicHz above the audible range → null", () => {
     const raw = { ...SAMPLE_SCENE, tuning: { ...SAMPLE_SCENE.tuning, tonicHz: 1e9 } };
     expect(decodeScene(encodeRaw(raw))).toBeNull();
+  });
+
+  it("older payloads without raga/drone decode with defaults", () => {
+    const { raga: _r, drone: _d, droneLevel: _l, ...old } = SAMPLE_SCENE;
+    const decoded = decodeScene(encodeRaw(old));
+    expect(decoded).not.toBeNull();
+    expect(decoded?.raga).toBe("");
+    expect(decoded?.drone).toBe(false);
+    expect(decoded?.droneLevel).toBe(0.5);
+  });
+
+  it("clamps droneLevel and coerces non-boolean drone to false", () => {
+    const raw = { ...SAMPLE_SCENE, drone: "yes", droneLevel: 3 };
+    const decoded = decodeScene(encodeRaw(raw));
+    expect(decoded?.drone).toBe(false);
+    expect(decoded?.droneLevel).toBe(1);
   });
 });

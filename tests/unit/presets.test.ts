@@ -13,6 +13,9 @@ const scene = (seed: number): MragaScene => ({
   theme: "saffron",
   seed,
   tuning: { tonicHz: 261.63, scaleCents: [0, 200, 400, 700, 900], label: "C" },
+  raga: "",
+  drone: false,
+  droneLevel: 0.5,
 });
 
 describe("presets", () => {

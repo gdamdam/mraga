@@ -42,6 +42,14 @@ export type EngineParams = {
   pRest: number;
   phrasePauseFactor: number;
   glideProbability: number;
+  // Raga grammar (optional — absent means the FOCUS palette applies both ways).
+  arohaMask?: boolean[];   // degrees allowed while ascending
+  avarohaMask?: boolean[]; // degrees allowed while descending
+  degreeBoost?: number[];  // extra per-degree resting strength (vadi/samvadi)
+  pakadSteps?: number[];   // signature phrase, lattice steps relative to Sa
+  pakadProb?: number;      // chance a fresh phrase is the pakad
+  // Conducting: a tapped ladder degree the line is pulled toward.
+  pullDegree?: number | null;
 };
 
 export type EngineState = {
@@ -96,7 +104,9 @@ function nearestRestingStep(
   for (let sp = Math.ceil(lo); sp <= Math.floor(hi); sp++) {
     const { degreeIndex } = stepPosToDegree(sp, scaleLen);
     if (resting[degreeIndex] > 0) {
-      const d = Math.abs(sp - target);
+      // Distance discounted by resting strength: a strong resting note (tonic,
+      // a boosted vadi) wins over a weak one up to ~2 steps further away.
+      const d = Math.abs(sp - target) - resting[degreeIndex] * 2;
       if (d < bestDist) {
         bestDist = d;
         best = sp;
@@ -121,6 +131,24 @@ function focusedDegrees(scaleCents: number[], resting: number[], focus: number):
   for (let i = 0; i < keep && i < priority.length; i++) allowed[priority[i]] = true;
   allowed[0] = true; // tonic always in the palette
   return allowed;
+}
+
+// Nearest lattice step of `degree` to `near`, kept within [lo, hi] when possible.
+function nearestDegreeStep(degree: number, near: number, scaleLen: number, lo: number, hi: number): number {
+  let best = degree;
+  let bestDist = Infinity;
+  const kLo = Math.floor((lo - degree) / scaleLen);
+  const kHi = Math.ceil((hi - degree) / scaleLen);
+  for (let k = kLo; k <= kHi; k++) {
+    const cand = degree + k * scaleLen;
+    if (cand < lo || cand > hi) continue;
+    const d = Math.abs(cand - near);
+    if (d < bestDist) {
+      bestDist = d;
+      best = cand;
+    }
+  }
+  return bestDist === Infinity ? reflectClamp(degree, lo, hi) : best;
 }
 
 function snapToAllowed(sp: number, allowed: boolean[], scaleLen: number, lo: number, hi: number): number {
@@ -149,47 +177,77 @@ function buildPhrase(
   rng: () => number,
   lastDeltas: number[],
   lastRhythm: number[],
-  allowed: boolean[],
+  up: boolean[],    // palette while ascending (aroha, or the FOCUS palette)
+  down: boolean[],  // palette while descending (avaroha, or the FOCUS palette)
+  union: boolean[], // up ∪ down — for direction-neutral snaps (targets)
 ): { steps: number[]; deltas: number[]; rhythm: number[] } {
+  // Pakad: sometimes the raga's signature phrase IS the next phrase,
+  // transposed by whole octaves to sit nearest the register centre. Not
+  // snapped — the pakad is by definition inside the raga.
+  const pakad = params.pakadSteps;
+  if (pakad && pakad.length >= 2 && rng() < (params.pakadProb ?? 0)) {
+    const mean = pakad.reduce((a, b) => a + b, 0) / pakad.length;
+    const k = Math.round((centerStep - mean) / scaleLen);
+    const steps = pakad.map((p) => reflectClamp(p + k * scaleLen, lo, hi));
+    const deltas: number[] = [];
+    let prev = curStep;
+    for (const s of steps) {
+      deltas.push(s - prev);
+      prev = s;
+    }
+    // The pakad lands held on its last note.
+    const rhythm = steps.map((_, i) => (i === steps.length - 1 ? 2 : 1));
+    return { steps, deltas, rhythm };
+  }
+
   // Motif repetition: replay the previous shape (pitch + rhythm) from here,
-  // snapped to the FOCUS palette.
+  // snapped to the direction-appropriate palette.
   if (lastDeltas.length >= 2 && rng() < params.repeatProb) {
     const steps: number[] = [];
     let p = curStep;
     for (const d of lastDeltas) {
-      p = snapToAllowed(reflectClamp(p + d, lo, hi), allowed, scaleLen, lo, hi);
+      const mask = d >= 0 ? up : down;
+      p = snapToAllowed(reflectClamp(p + d, lo, hi), mask, scaleLen, lo, hi);
       steps.push(p);
     }
     steps[steps.length - 1] = snapToAllowed(
-      nearestRestingStep(steps[steps.length - 1], lo, hi, scaleLen, resting), allowed, scaleLen, lo, hi,
+      nearestRestingStep(steps[steps.length - 1], lo, hi, scaleLen, resting), union, scaleLen, lo, hi,
     );
     return { steps, deltas: lastDeltas, rhythm: lastRhythm };
   }
 
-  // Fresh directed contour toward a resting target (on the FOCUS palette).
-  // Tonic gravity (from RESTLESSNESS) gives a graded pull back toward the
-  // register centre — stronger when calm and when further from home.
-  const distFromCenter = curStep - centerStep;
-  const towardCenter = distFromCenter > 0 ? -1 : 1;
-  const homeBias = Math.min(
-    0.95,
-    Math.max(0.05, 0.5 + params.tonicGravity * (Math.abs(distFromCenter) / params.registerHalfSpanSteps) * 0.5),
-  );
-  const dir = rng() < homeBias ? towardCenter : -towardCenter;
-  const reach = 3 + Math.floor(rng() * 5); // 3..7 steps — longer, singable arcs
-  const target = snapToAllowed(
-    nearestRestingStep(reflectClamp(curStep + dir * reach, lo, hi), lo, hi, scaleLen, resting), allowed, scaleLen, lo, hi,
-  );
+  // Fresh directed contour toward a resting target. Tonic gravity (from
+  // RESTLESSNESS) gives a graded pull back toward the register centre —
+  // stronger when calm and when further from home. A conducted pull (tapped
+  // ladder degree) overrides the target outright.
+  let target: number;
+  if (params.pullDegree != null) {
+    target = nearestDegreeStep(params.pullDegree, curStep, scaleLen, lo, hi);
+  } else {
+    const distFromCenter = curStep - centerStep;
+    const towardCenter = distFromCenter > 0 ? -1 : 1;
+    const homeBias = Math.min(
+      0.95,
+      Math.max(0.05, 0.5 + params.tonicGravity * (Math.abs(distFromCenter) / params.registerHalfSpanSteps) * 0.5),
+    );
+    const dir = rng() < homeBias ? towardCenter : -towardCenter;
+    const reach = 3 + Math.floor(rng() * 5); // 3..7 steps — longer, singable arcs
+    target = snapToAllowed(
+      nearestRestingStep(reflectClamp(curStep + dir * reach, lo, hi), lo, hi, scaleLen, resting), union, scaleLen, lo, hi,
+    );
+  }
 
   const steps: number[] = [];
   let p = curStep;
   let guard = 0;
+  const fallbackDir = Math.sign(target - curStep) || 1;
   while (p !== target && guard++ < 24) {
-    const toward = Math.sign(target - p) || dir;
+    const toward = Math.sign(target - p) || fallbackDir;
     const step = rng() < params.contourStrength ? toward : rng() < 0.5 ? toward : -toward;
     let mag = 1;
     if (rng() < params.leapProbability) mag = 2 + Math.floor(rng() * 2); // 2..3
-    p = snapToAllowed(reflectClamp(p + step * mag, lo, hi), allowed, scaleLen, lo, hi);
+    const mask = step >= 0 ? up : down;
+    p = snapToAllowed(reflectClamp(p + step * mag, lo, hi), mask, scaleLen, lo, hi);
     steps.push(p);
   }
   if (steps.length === 0 || steps[steps.length - 1] !== target) steps.push(target);
@@ -214,7 +272,12 @@ export function nextEvent(
 ): { event: EngineEvent; state: EngineState } {
   const scaleLen = scaleCents.length;
   const next: EngineState = { ...state };
-  const resting = restingNotes(scaleCents);
+  const restingBase = restingNotes(scaleCents);
+  // Vadi/samvadi boost: the raga's emphasized degrees behave as strong
+  // resting notes (resolution targets, longer dwell, slight accent).
+  const resting = params.degreeBoost
+    ? restingBase.map((r, i) => Math.max(r, params.degreeBoost![i] ?? 0))
+    : restingBase;
   const centerStep = hzToNearestStepPos(params.centerPitchHz, scaleCents, tonicHz);
   const lo = centerStep - params.registerHalfSpanSteps;
   const hi = centerStep + params.registerHalfSpanSteps;
@@ -230,12 +293,17 @@ export function nextEvent(
   }
 
   const curStep = degreeToStepPos(state.degreeIndex, state.octave, scaleLen);
-  const allowed = focusedDegrees(scaleCents, resting, params.focus);
+  // Palettes: a raga supplies direction-dependent masks (aroha/avaroha);
+  // otherwise the FOCUS palette applies both ways.
+  const focused = focusedDegrees(scaleCents, resting, params.focus);
+  const up = params.arohaMask ?? focused;
+  const down = params.avarohaMask ?? focused;
+  const allowed = up.map((v, i) => v || down[i]); // union, for direction-neutral snaps
 
   // 2. Need a new phrase? Build one (repeat the last motif, or a fresh contour).
   if (state.phraseIdx >= state.phrase.length) {
     const built = buildPhrase(
-      curStep, centerStep, lo, hi, scaleLen, resting, params, rng, state.lastDeltas, state.lastRhythm, allowed,
+      curStep, centerStep, lo, hi, scaleLen, resting, params, rng, state.lastDeltas, state.lastRhythm, up, down, allowed,
     );
     next.phrase = built.steps;
     next.phraseRhythm = built.rhythm;

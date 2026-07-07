@@ -1,5 +1,6 @@
 // src/voice.ts
 import workletUrl from "./engine/voiceProcessor.js?url";
+import { concatChunks } from "./recorder";
 import type { KSParams } from "./voicePresets";
 
 export type Voice = {
@@ -9,6 +10,15 @@ export type Voice = {
   setPreset: (params: KSParams) => void;
   setVolume: (v: number) => void; // master output gain, 0..1
   getLevel: () => number;         // current output RMS, ~0..1 (for the logo pulse)
+  // Tanpura drone: a second KS pool with its own level, sharing the space.
+  pluckDrone: (freq: number, velocity: number) => void;
+  setDronePreset: (params: KSParams) => void;
+  setDroneLevel: (v: number) => void; // 0..1
+  // WAV capture of the master output (melody + drone + reverb).
+  startRecording: () => void;
+  stopRecording: () => Promise<{ left: Float32Array; right: Float32Array; sampleRate: number }>;
+  // mbus publishing: the master bus node (pre-destination) to publish from.
+  getPublishTap: () => AudioNode;
   dispose: () => void;
 };
 
@@ -29,6 +39,11 @@ export async function createVoice(): Promise<Voice> {
   const ctx = new AudioContext();
   await ctx.audioWorklet.addModule(workletUrl);
   const node = new AudioWorkletNode(ctx, "mraga-voice", { outputChannelCount: [2] });
+  // Separate KS pool for the tanpura so its preset/level are independent of
+  // the melodic voice, while sharing the same dry/reverb space.
+  const droneNode = new AudioWorkletNode(ctx, "mraga-voice", { outputChannelCount: [2] });
+  const droneGain = ctx.createGain();
+  droneGain.gain.value = 0.5;
 
   const dry = ctx.createGain();
   dry.gain.value = 0.85;
@@ -48,8 +63,31 @@ export async function createVoice(): Promise<Voice> {
 
   node.connect(dry).connect(master);
   node.connect(convolver).connect(wet).connect(master);
+  droneNode.connect(droneGain);
+  droneGain.connect(dry);
+  droneGain.connect(convolver);
   master.connect(analyser);
   master.connect(ctx.destination);
+
+  // Recorder tap on the master. Input-only in spirit; its (silent) output is
+  // wired to the destination so the graph keeps pulling it every quantum.
+  const recNode = new AudioWorkletNode(ctx, "mraga-recorder", { outputChannelCount: [1] });
+  master.connect(recNode);
+  recNode.connect(ctx.destination);
+  let recL: Float32Array[] = [];
+  let recR: Float32Array[] = [];
+  let recDone: (() => void) | null = null;
+  recNode.port.onmessage = (e) => {
+    const m = e.data;
+    if (m?.type === "chunk") {
+      recL.push(m.l);
+      recR.push(m.r);
+    } else if (m?.type === "done") {
+      recDone?.();
+      recDone = null;
+    }
+  };
+
 
   const getLevel = () => {
     analyser.getByteTimeDomainData(buf);
@@ -71,6 +109,29 @@ export async function createVoice(): Promise<Voice> {
       master.gain.value = Math.max(0, Math.min(1, v));
     },
     getLevel,
+    pluckDrone: (freq, velocity) =>
+      droneNode.port.postMessage({ type: "pluck", freq, velocity }),
+    setDronePreset: (params) => droneNode.port.postMessage({ type: "preset", params }),
+    setDroneLevel: (v) => {
+      droneGain.gain.value = Math.max(0, Math.min(1, v));
+    },
+    startRecording: () => {
+      recL = [];
+      recR = [];
+      recNode.port.postMessage({ type: "start" });
+    },
+    stopRecording: () =>
+      new Promise((resolve) => {
+        // The worklet flushes its tail, then posts "done" — resolve after that
+        // so the last partial batch is included.
+        recDone = () => {
+          resolve({ left: concatChunks(recL), right: concatChunks(recR), sampleRate: ctx.sampleRate });
+          recL = [];
+          recR = [];
+        };
+        recNode.port.postMessage({ type: "stop" });
+      }),
+    getPublishTap: () => master,
     dispose: () => void ctx.close(),
   };
 }

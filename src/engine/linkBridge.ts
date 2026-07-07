@@ -34,7 +34,10 @@ export interface LinkState {
 
 type LinkListener = (state: LinkState) => void;
 
-const WS_URLS = ["ws://127.0.0.1:19876", "ws://[::1]:19876", "ws://localhost:19876"];
+// `localhost` must come first: Firefox blocks insecure ws:// to IP literals
+// from an HTTPS page as mixed content and only exempts the `localhost`
+// hostname (Firefox bug 1376309). Same list and reasoning as the mbus client.
+const WS_URLS = ["ws://localhost:19876", "ws://127.0.0.1:19876", "ws://[::1]:19876"];
 const RETRY_MS = 5000;
 let wsUrlIdx = 0;
 

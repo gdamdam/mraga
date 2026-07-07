@@ -56,3 +56,10 @@ body { margin: 0; background: var(--bg); color: var(--ink); }
 .sel select { font: inherit; color: var(--ink); background: var(--field); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; cursor: pointer; }
 .bpm { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
 .bpm input { width: 56px; font: inherit; color: var(--ink); background: var(--field); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; }
+
+/* Conducting + raga palette on the ladder. */
+.dot-cell { cursor: pointer; }
+.dot.off { opacity: 0.25; }
+.dot.pulled { outline: 1px solid var(--ember); outline-offset: 2px; }
+.deg-label.pulled { color: var(--ember); }
+.chip-btn.on { color: var(--ember); }
