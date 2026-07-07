@@ -46,8 +46,13 @@ export class Scheduler {
     let guard = 0;
     while (this.nextTime < horizon && guard++ < 1000) {
       const e = this.opts.pull();
+      // Advance the cursor BEFORE dispatching: if a callback throws, the
+      // timeline still moves on, instead of re-scheduling against a frozen
+      // nextTime on every subsequent tick (an event storm).
+      const rawTime = this.nextTime;
+      this.nextTime += Math.max(0.001, e.ioiSec);
       if (e.kind === "note") {
-        let onset = this.opts.quantize ? this.opts.quantize(this.nextTime) : this.nextTime;
+        let onset = this.opts.quantize ? this.opts.quantize(rawTime) : rawTime;
         // Monotonic guard: never schedule at/before the previous onset. When
         // quantizing, push to the next grid line; otherwise nudge forward.
         if (onset <= this.lastOnset) {
@@ -56,9 +61,8 @@ export class Scheduler {
         this.lastOnset = onset;
         this.opts.onNote(e, onset);
       } else {
-        this.opts.onRest(e, this.nextTime);
+        this.opts.onRest(e, rawTime);
       }
-      this.nextTime += Math.max(0.001, e.ioiSec);
     }
   }
 

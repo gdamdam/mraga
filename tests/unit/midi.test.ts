@@ -33,4 +33,14 @@ describe("hzToMidi", () => {
       expect(bend).toBeLessThanOrEqual(16383);
     }
   });
+
+  it("note is clamped to 0..127 for extreme frequencies", () => {
+    for (const hz of [0.1, 1, 100000, 1e7]) {
+      const { note, bend } = hzToMidi(hz);
+      expect(note).toBeGreaterThanOrEqual(0);
+      expect(note).toBeLessThanOrEqual(127);
+      expect(bend).toBeGreaterThanOrEqual(0);
+      expect(bend).toBeLessThanOrEqual(16383);
+    }
+  });
 });

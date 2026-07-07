@@ -140,6 +140,9 @@ export function App() {
   }, []);
 
   async function loadLink() {
+    // Blur with an empty field must not reset a tuning loaded elsewhere
+    // (e.g. from a shared ?s= scene) back to the default.
+    if (!linkInput.trim()) return;
     setTuning(await importTuningFromUrl(linkInput));
   }
 
@@ -170,6 +173,7 @@ export function App() {
   }
 
   function changeBpm(v: number) {
+    if (!Number.isFinite(v)) return; // clearing the number field yields NaN
     const next = Math.max(40, Math.min(240, v));
     setBpm(next);
     bpmRef.current = next;
@@ -282,9 +286,16 @@ export function App() {
 
   function shareScene() {
     const url = sceneToUrl(currentScene(), window.location.origin + window.location.pathname);
-    navigator.clipboard?.writeText(url);
-    setShared(true);
-    setTimeout(() => setShared(false), 1500);
+    const confirm = () => {
+      setShared(true);
+      setTimeout(() => setShared(false), 1500);
+    };
+    if (navigator.clipboard) {
+      // Only show "copied ✓" if the write actually succeeded.
+      navigator.clipboard.writeText(url).then(confirm, () => window.prompt("Copy link:", url));
+    } else {
+      window.prompt("Copy link:", url);
+    }
   }
 
   async function togglePlay() {

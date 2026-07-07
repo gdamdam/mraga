@@ -173,4 +173,22 @@ describe("sanitization", () => {
     };
     expect(decodeScene(encodeRaw(raw))).toBeNull();
   });
+
+  it("rejects empty scaleCents → null (would divide by scale length)", () => {
+    const raw = { ...SAMPLE_SCENE, tuning: { ...SAMPLE_SCENE.tuning, scaleCents: [] } };
+    expect(decodeScene(encodeRaw(raw))).toBeNull();
+  });
+
+  it("rejects absurdly long scaleCents (>24) → null", () => {
+    const raw = {
+      ...SAMPLE_SCENE,
+      tuning: { ...SAMPLE_SCENE.tuning, scaleCents: Array.from({ length: 25 }, (_, i) => i * 40) },
+    };
+    expect(decodeScene(encodeRaw(raw))).toBeNull();
+  });
+
+  it("rejects tonicHz above the audible range → null", () => {
+    const raw = { ...SAMPLE_SCENE, tuning: { ...SAMPLE_SCENE.tuning, tonicHz: 1e9 } };
+    expect(decodeScene(encodeRaw(raw))).toBeNull();
+  });
 });

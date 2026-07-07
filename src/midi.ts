@@ -7,7 +7,9 @@
 // Nearest MIDI note + pitch-bend value (0..16383, centre 8192) for an exact Hz.
 export function hzToMidi(hz: number): { note: number; bend: number } {
   const midiFloat = 69 + 12 * Math.log2(hz / 440);
-  const note = Math.round(midiFloat);
+  // Clamp to the valid MIDI range — an out-of-range note makes output.send()
+  // throw inside the scheduler callback.
+  const note = Math.max(0, Math.min(127, Math.round(midiFloat)));
   const centsDev = (midiFloat - note) * 100; // -50..+50
   // ±2 semitones (±200 cents) maps to the full bend range around centre.
   let bend = 8192 + Math.round((centsDev / 200) * 8192);

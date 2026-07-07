@@ -65,10 +65,15 @@ function validateTuning(
 ): { tonicHz: number; scaleCents: number[]; label: string } | null {
   if (!tuning || typeof tuning !== "object") return null;
   const t = tuning as Record<string, unknown>;
-  if (!isFiniteNumber(t.tonicHz) || (t.tonicHz as number) <= 0) return null;
+  // tonicHz must be a plausible audio frequency (an absurd value would push
+  // every derived pitch out of range downstream).
+  if (!isFiniteNumber(t.tonicHz) || (t.tonicHz as number) <= 0 || (t.tonicHz as number) > 20000) return null;
   if (typeof t.label !== "string") return null;
   if (!Array.isArray(t.scaleCents)) return null;
   const scaleCents = t.scaleCents as unknown[];
+  // An empty scale would make the engine divide by scale length (NaN pitches,
+  // crash at play); [].every() is vacuously true, so check length explicitly.
+  if (scaleCents.length < 1 || scaleCents.length > 24) return null;
   if (!scaleCents.every(isFiniteNumber)) return null;
   return {
     tonicHz: t.tonicHz as number,

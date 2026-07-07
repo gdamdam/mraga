@@ -93,4 +93,27 @@ describe("Scheduler", () => {
     const quantized = makeOpts((t) => Math.ceil(t / 0.25 - 1e-9) * 0.25);
     expect(quantized).toBe(free);
   });
+
+  it("a throwing onNote does not stall the timeline (no event storm)", () => {
+    let now = 0;
+    let pulls = 0;
+    const sched = new Scheduler({
+      now: () => now,
+      lookaheadSec: 0.1,
+      pull: () => {
+        pulls++;
+        return { kind: "note", pitchHz: 220, velocity: 0.7, ioiSec: 0.5, durationHint: 1, degreeIndex: 0, octave: 0 };
+      },
+      onNote: () => { throw new Error("boom"); },
+      onRest: () => {},
+    });
+    sched.start();
+    // Each tick aborts at the throwing callback, but nextTime must still have
+    // advanced past the event — so ~2 events/sec are pulled, not 1000/tick.
+    for (let i = 0; i < 40; i++) {
+      now += 0.025;
+      try { sched.tick(); } catch { /* the throw escapes tick; setInterval would swallow it */ }
+    }
+    expect(pulls).toBeLessThanOrEqual(4); // 1s of clock at 0.5s IOI ≈ 2–3 pulls
+  });
 });
