@@ -46,8 +46,9 @@ Optional Web MIDI: each note = nearest MIDI note + 14-bit pitch bend for the
 cents offset (±2 semitone GM range), note clamped 0..127, scheduled note-off.
 First available output, channel 1.
 
-**Known limitation**: one channel means a new note's pitch bend retunes
-still-ringing previous notes. The proper fix is MPE-style channel rotation —
+**Known limitation**: pitch bend is a channel-global MIDI message, so on a
+single channel a new note's bend retunes every still-ringing previous note.
+The proper fix is MPE-style channel rotation —
 deliberately deferred (changes what external synths receive; needs a UI
 switch). See development.md roadmap.
 
