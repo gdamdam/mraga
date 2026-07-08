@@ -1,7 +1,7 @@
 {
   "name": "mraga",
   "private": true,
-  "version": "0.3.1",
+  "version": "0.3.2",
   "type": "module",
   "license": "AGPL-3.0-or-later",
   "scripts": {
@@ -15,7 +15,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "typecheck": "tsc -b --noEmit"
+    "typecheck": "tsc -b --noEmit",
+    "vendored:check": "node scripts/sync-vendored.mjs",
+    "vendored:sync": "node scripts/sync-vendored.mjs --sync"
   },
   "dependencies": {
     "react": "^19.2.0",
