@@ -22,6 +22,10 @@ export type MragaScene = {
   raga: string;       // raga id, or "" for free (no grammar)
   drone: boolean;     // built-in tanpura on/off
   droneLevel: number; // tanpura level 0..1
+  // Added in 1.0 — musical settings that travel with the sound. Both default on
+  // decode so pre-1.0 links keep working (backward compatible).
+  taal: string;       // taal id ("off" | teental | jhaptal | rupak | ektaal)
+  gamaka: boolean;    // authored ornaments on/off
 };
 
 // ---------------------------------------------------------------------------
@@ -88,7 +92,13 @@ function validateTuning(
 
 const VALID_TIMING = new Set<string>(["free", "bpm", "link"]);
 
+// A well-formed scene is a few hundred bytes; even a 24-degree custom tuning is
+// small. Reject anything wildly oversized cheaply, before base64/JSON work, so a
+// multi-megabyte fragment can't force a giant decode/allocation.
+const MAX_SCENE_PAYLOAD = 64_000;
+
 export function decodeScene(payload: string): MragaScene | null {
+  if (typeof payload !== "string" || payload.length > MAX_SCENE_PAYLOAD) return null;
   try {
     const bytes = urlSafeB64ToBytes(payload);
     const json = new TextDecoder().decode(bytes);
@@ -127,6 +137,10 @@ export function decodeScene(payload: string): MragaScene | null {
     const drone = raw.drone === true;
     const droneLevel = isFiniteNumber(raw.droneLevel) ? clamp(raw.droneLevel as number, 0, 1) : 0.5;
 
+    // 1.0 additions — defaulted so pre-1.0 links stay valid.
+    const taal = typeof raw.taal === "string" ? raw.taal : "off";
+    const gamaka = raw.gamaka === true;
+
     return {
       v: 1,
       knobs,
@@ -141,6 +155,8 @@ export function decodeScene(payload: string): MragaScene | null {
       raga,
       drone,
       droneLevel,
+      taal,
+      gamaka,
     };
   } catch {
     return null;

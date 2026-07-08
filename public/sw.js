@@ -1,4 +1,7 @@
-const VERSION = "0.2.0";
+// Stamped from package.json at build time by scripts/stamp-sw-version.mjs
+// (postbuild). Dev leaves the placeholder untouched — the SW is not
+// registered on localhost (see src/swRegister.ts), so it is never used there.
+const VERSION = "__MRAGA_VERSION__";
 const CACHE = `mraga-v${VERSION}`;
 
 self.addEventListener("install", (e) => {

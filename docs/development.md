@@ -14,19 +14,22 @@
 ## Verification gate (before any "done")
 
 ```bash
-npm test            # unit suite (125+ tests)
+npm run check       # suite gate: lint + typecheck + test + build
+npm run lint        # eslint (flat config; src/ + tests/)
+npm test            # unit suite (180+ tests)
 npm run build       # worklet + tsc -b + vite build — this is the TS gate
 npm run test:e2e    # playwright smoke; binds port 4173 → run outside sandboxes
 ```
 
-There is no lint script yet (see Roadmap). CI: .github/workflows/deploy.yml
-builds and ships to GitHub Pages on push to main.
+CI: .github/workflows/deploy.yml runs `npm run check`, then ships to
+GitHub Pages on push to main.
 
 ## Release checklist
 
-1. Bump `package.json` version **and** `const VERSION` in `public/sw.js`
-   (hand-synced — the SW cache name derives from it; automate someday).
-2. `npm test && npm run build`, e2e if UI changed.
+1. Bump `package.json` version. The SW cache name derives from it
+   automatically — `scripts/stamp-sw-version.mjs` (postbuild) stamps the
+   `__MRAGA_VERSION__` placeholder in `public/sw.js` into `dist/sw.js`.
+2. `npm run check`, e2e if UI changed.
 3. Commit (repo convention: `feat:` / `fix:` / `docs:` prefixes, merge
    commits per feature branch historically; direct commits to main are fine
    for small work).
@@ -53,29 +56,32 @@ builds and ships to GitHub Pages on push to main.
 
 ## Roadmap / backlog (in rough priority order)
 
-1. **Register mraga in mbus sync** — add `'mraga'` to SIBLINGS in
-   `../mbus/scripts/sync-vendored.mjs` (couldn't be done from the mraga
-   sandbox; one line).
-2. **MPE MIDI** — per-note channel rotation (2..8) so overlapping notes keep
-   their own pitch bend; UI switch between single-channel and MPE. Fixes the
-   documented microtonal-overlap limitation.
-3. **Gamaka ornaments** — beyond meend glide: andolan (slow oscillation on
-   held resting notes), kan (grace) notes before phrase starts. Engine-level,
-   pure, seeded; render as short glide chains on the KS voice.
-4. **More ragas + time-of-day menu** — the RAGAS table is data-driven;
-   consider aroha-only vakra (zigzag) patterns for ragas like Gaud Malhar.
+1. ~~**Register mraga in mbus sync**~~ — done: `'mraga'` added to SIBLINGS in
+   `../mbus/scripts/sync-vendored.mjs`; `npm run vendored:check` passes.
+2. ~~**MPE MIDI**~~ — done: Single/MPE MODE selector; MPE rotates channels 2–8
+   with per-note bend; pure allocator `src/mpe.ts` (steal/panic/cleanup tested).
+3. ~~**Gamaka ornaments**~~ — done: `src/gamaka.ts` (meend/kan/andolan/murki),
+   authored per-raga, seeded, emitted as micro-notes via the engine's pending
+   queue; toggle in the footer.
+4. ~~**More ragas**~~ — done: 12 ragas with time/weak/ornament metadata.
+   (vakra/zigzag aroha patterns are still a future refinement.)
 5. **mbus subscribe side** — receive a remote source (e.g. mdrone's actual
    drone audio) into mraga's space; the vendored client already supports
-   `subscribe()`.
-6. **Taal grid** — optional rhythmic cycle (teental 16, jhaptal 10) layered
-   on the BPM grid: accent sam, mark khali in the UI.
-7. **Lint script** — add eslint (suite gate is lint+type+test+build; mraga
-   lacks the lint quarter).
-8. **sw.js VERSION from package.json at build** — kill the hand-sync.
+   `subscribe()`. (Still future.)
+6. ~~**Taal grid**~~ — done: `src/taal.ts` (teental/jhaptal/rupak/ektaal), pure
+   structural bias toward sam/khali; compact UI position; free timing stays rubato.
+7. ~~**Lint script**~~ — done: eslint flat config + `npm run check`
+   (lint+typecheck+test+build).
+8. ~~**sw.js VERSION from package.json at build**~~ — done:
+   `scripts/stamp-sw-version.mjs` stamps `dist/sw.js` on postbuild.
 9. **AudioContext disposal** — `voice.dispose()` is never called; fine for a
    single-page instrument, worth doing if mraga ever embeds elsewhere.
-10. **README refresh** — the README predates 0.2.0; fold in drone/raga/arc/
-    conduct/rec/mbus per the house style (badges, tables, ASCII diagram).
+10. **README refresh** — largely folded in (MIDI/MPE, raga/taal/gamaka, stage
+    lock); a full house-style diagram pass is still worthwhile.
+
+**Before a 1.0 tag**: walk `docs/qa-checklist.md` on real devices (24-min arc,
+MIDI/MPE hardware, WAV, mdrone import, mbus, PWA/offline, mobile lifecycle).
+Unit + Playwright coverage is green but does not certify hardware.
 
 ## Testing map
 
@@ -92,4 +98,9 @@ builds and ships to GitHub Pages on push to main.
 | Tuning/pitch math | tests/unit/tuning.test.ts |
 | mdrone import + codec | tests/unit/linkImport.test.ts, shareCodec.test.ts |
 | MIDI math | tests/unit/midi.test.ts |
+| MPE allocation/stealing/panic/cleanup | tests/unit/mpe.test.ts |
+| Gamaka ornaments (pure) | tests/unit/gamaka.test.ts |
+| Gamaka + taal in the engine | tests/unit/engineGamaka.test.ts |
+| Taal model / position / bias | tests/unit/taal.test.ts |
+| Stability: payload bounds, arc completion, integration | tests/unit/stability.test.ts |
 | e2e smoke (app boots, PLAY works) | tests/e2e/smoke.spec.ts |

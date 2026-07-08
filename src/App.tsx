@@ -9,7 +9,8 @@ import { Scheduler } from "./scheduler";
 import { createVoice, type Voice } from "./voice";
 import { VOICE_IDS, VOICE_LABELS, getPreset, type VoiceId } from "./voicePresets";
 import { Tanpura } from "./tanpura";
-import { RAGA_IDS, RAGAS, getRaga, ragaMasks, ragaBoost } from "./ragas";
+import { RAGA_IDS, RAGAS, getRaga, ragaMasks, ragaBoost, ragaOrnaments } from "./ragas";
+import { getTaal, taalPositionAt, taalBias, TAAL_IDS, TAALS, type TaalId, type TaalPosition } from "./taal";
 import { arcKnobs, arcPhaseAt, ARC_DURATIONS_MIN, type ArcPhase } from "./arc";
 import { encodeWav } from "./recorder";
 import { createMbusClient, type MbusClient, type Publication, type BridgeState } from "./transport/mbus";
@@ -18,10 +19,13 @@ import { enableLinkBridge, onLinkState, type LinkState } from "./engine/linkBrid
 import { THEME_IDS, THEMES, applyTheme, loadThemeId, type ThemeId } from "./themes";
 import { sceneToUrl, sceneFromUrl, type MragaScene } from "./mragaScene";
 import { loadPresets, savePresets, upsertPreset, deletePreset, type Preset } from "./presets";
-import { createMidiOut, type MidiOut } from "./midi";
+import { createMidiOut, type MidiOut, type MidiMode } from "./midi";
 
 // Block-art wordmark in mdrone's style (rendered with the .title-art glow).
 const LOGO = "█▀▄▀█ █▀█ █▀█ █▀▀ █▀█\n█ ▀ █ █▀▄ █▀█ █▄█ █▀█";
+
+// Sargam degree names (matches PitchLadder) — for the active-note readout.
+const SARGAM = ["Sa", "r", "R", "g", "G", "m", "M", "P", "d", "D", "n", "N"];
 
 const VOICE_KEY = "mraga-voice";
 const TIMING_KEY = "mraga-timing";
@@ -32,9 +36,16 @@ const RAGA_KEY = "mraga-raga";
 const DRONE_KEY = "mraga-drone";
 const DRONE_LVL_KEY = "mraga-drone-level";
 const ARC_KEY = "mraga-arc";
+const TAAL_KEY = "mraga-taal";
+const GAMAKA_KEY = "mraga-gamaka";
+const MIDI_MODE_KEY = "mraga-midi-mode";
+const STAGELOCK_KEY = "mraga-stagelock";
 
 type TimingMode = "free" | "bpm" | "link";
 const TIMING_MODES: TimingMode[] = ["free", "bpm", "link"];
+// The five knobs the performance arc drives (THEME/FOCUS stay the user's).
+const ARC_KNOBS = ["density", "rhythm", "silence", "register", "restlessness"] as const;
+type ArcKnobKey = (typeof ARC_KNOBS)[number];
 
 function loadVoiceId(): VoiceId {
   const stored = localStorage.getItem(VOICE_KEY);
@@ -71,6 +82,16 @@ function loadArcMin(): number {
   const v = parseInt(localStorage.getItem(ARC_KEY) ?? "", 10);
   return ARC_DURATIONS_MIN.includes(v) ? v : 0;
 }
+function loadTaal(): TaalId {
+  const stored = (localStorage.getItem(TAAL_KEY) ?? "off") as TaalId;
+  return (TAAL_IDS as string[]).includes(stored) ? stored : "off";
+}
+function loadGamaka(): boolean {
+  return localStorage.getItem(GAMAKA_KEY) === "1";
+}
+function loadMidiMode(): MidiMode {
+  return localStorage.getItem(MIDI_MODE_KEY) === "mpe" ? "mpe" : "single";
+}
 
 export function App() {
   const [tuning, setTuning] = useState<PortableTuning>(DEFAULT_TUNING);
@@ -97,16 +118,25 @@ export function App() {
   const [droneOn, setDroneOn] = useState<boolean>(loadDroneOn);
   const [droneLevel, setDroneLevel] = useState<number>(loadDroneLevel);
   const [arcMin, setArcMin] = useState<number>(loadArcMin);
-  const [arcStatus, setArcStatus] = useState<{ phase: ArcPhase; pct: number } | null>(null);
+  const [arcStatus, setArcStatus] = useState<{ phase: ArcPhase; pct: number; remainingSec: number } | null>(null);
+  // The arc's current knob values, mirrored for the sliders so an arc-owned knob
+  // shows what's actually playing (grabbing it then causes no discontinuity).
+  const [arcDriven, setArcDriven] = useState<ReturnType<typeof arcKnobs> | null>(null);
   const [pullDegree, setPullDegree] = useState<number | null>(null);
   const [recording, setRecording] = useState(false);
   const [mbusOn, setMbusOn] = useState(false); // session-transient by convention
   const [mbusState, setMbusState] = useState<BridgeState>("idle");
+  const [taalId, setTaalId] = useState<TaalId>(loadTaal);
+  const [taalPos, setTaalPos] = useState<TaalPosition | null>(null);
+  const [gamakaOn, setGamakaOn] = useState<boolean>(loadGamaka);
+  const [midiMode, setMidiMode] = useState<MidiMode>(loadMidiMode);
+  const [stageLock, setStageLock] = useState<boolean>(() => localStorage.getItem(STAGELOCK_KEY) === "1");
 
   const titleRef = useRef<HTMLHeadingElement>(null);
   const voiceRef = useRef<Voice | null>(null);
   const schedRef = useRef<Scheduler | null>(null);
   const playingRef = useRef(false); // guards async ladder-light timeouts after STOP
+  const hasPlayedRef = useRef(false); // first-run hint hides once the user has played
   const stateRef = useRef<EngineState>(initState());
   const rngRef = useRef<() => number>(makeRng(seed));
   const knobsRef = useRef(knobs);
@@ -123,6 +153,11 @@ export function App() {
   const droneLevelRef = useRef(droneLevel);
   const arcMinRef = useRef(arcMin);
   const arcRef = useRef<{ t0: number; durSec: number } | null>(null); // live arc window (audio clock)
+  const taalRef = useRef(taalId);
+  const gamakaRef = useRef(gamakaOn);
+  // Knobs the user has grabbed while the arc is engaged — the arc stops driving
+  // these so manual intervention takes over without a jump (M7).
+  const takenKnobsRef = useRef<Set<ArcKnobKey>>(new Set());
   const tanpuraRef = useRef<Tanpura | null>(null);
   if (!tanpuraRef.current) tanpuraRef.current = new Tanpura();
   const mbusClientRef = useRef<MbusClient | null>(null);
@@ -138,6 +173,8 @@ export function App() {
   droneOnRef.current = droneOn;
   droneLevelRef.current = droneLevel;
   arcMinRef.current = arcMin;
+  taalRef.current = taalId;
+  gamakaRef.current = gamakaOn;
 
   // Seed the internal BPM grid from the current audio clock (no-op before audio).
   function seedInternalClock() {
@@ -283,7 +320,47 @@ export function App() {
     // Changing the arc while playing (re)starts it from now.
     if (playingRef.current && voiceRef.current) {
       arcRef.current = min > 0 ? { t0: voiceRef.current.ctx.currentTime, durSec: min * 60 } : null;
+      takenKnobsRef.current.clear();
     }
+  }
+
+  // --- knobs: Stage Lock blocks accidental moves; arc-owned knobs the user
+  // grabs are "taken" so the arc stops driving them (graceful manual takeover) ---
+  function setKnob(key: keyof Knobs, v: number) {
+    if (stageLock) return; // Stage Lock: no accidental large changes
+    if (arcRef.current && (ARC_KNOBS as readonly string[]).includes(key)) {
+      takenKnobsRef.current.add(key as ArcKnobKey);
+    }
+    setKnobs((k) => ({ ...k, [key]: v }));
+  }
+
+  function changeTaal(id: TaalId) {
+    const valid = (TAAL_IDS as string[]).includes(id) ? id : "off";
+    setTaalId(valid);
+    taalRef.current = valid;
+    localStorage.setItem(TAAL_KEY, valid);
+    if (valid === "off") setTaalPos(null);
+  }
+
+  function toggleGamaka() {
+    const next = !gamakaOn;
+    setGamakaOn(next);
+    gamakaRef.current = next;
+    localStorage.setItem(GAMAKA_KEY, next ? "1" : "0");
+  }
+
+  function toggleStageLock() {
+    setStageLock((prev) => {
+      const next = !prev;
+      localStorage.setItem(STAGELOCK_KEY, next ? "1" : "0");
+      return next;
+    });
+  }
+
+  function changeMidiMode(mode: MidiMode) {
+    setMidiMode(mode);
+    localStorage.setItem(MIDI_MODE_KEY, mode);
+    midiOutRef.current?.setMode(mode); // silences all notes, then switches
   }
 
   // --- conducting: tap a ladder degree to pull the line toward it ---
@@ -355,6 +432,8 @@ export function App() {
       raga: ragaId,
       drone: droneOn,
       droneLevel,
+      taal: taalId,
+      gamaka: gamakaOn,
     };
   }
 
@@ -393,6 +472,12 @@ export function App() {
       setTuning({ tonicHz: s.tuning.tonicHz, scaleCents: s.tuning.scaleCents, label: s.tuning.label });
     }
     if (typeof s.raga === "string") selectRaga(s.raga);
+    if (typeof s.taal === "string") changeTaal((TAAL_IDS as string[]).includes(s.taal) ? (s.taal as TaalId) : "off");
+    if (typeof s.gamaka === "boolean") {
+      setGamakaOn(s.gamaka);
+      gamakaRef.current = s.gamaka;
+      localStorage.setItem(GAMAKA_KEY, s.gamaka ? "1" : "0");
+    }
     if (typeof s.droneLevel === "number") changeDroneLevel(Math.max(0, Math.min(1, s.droneLevel)));
     if (typeof s.drone === "boolean") {
       setDroneOn(s.drone);
@@ -436,7 +521,7 @@ export function App() {
       setMidiName(null);
       return;
     }
-    const out = await createMidiOut();
+    const out = await createMidiOut(midiMode);
     midiOutRef.current = out;
     setMidiName(out ? out.name : "no device / unsupported");
   }
@@ -445,17 +530,42 @@ export function App() {
   useEffect(() => {
     if (!playing || arcMin <= 0) {
       setArcStatus(null);
+      setArcDriven(null);
       return;
     }
     const id = setInterval(() => {
       const arc = arcRef.current;
       const v = voiceRef.current;
       if (!arc || !v) return;
-      const t = Math.max(0, Math.min(1, (v.ctx.currentTime - arc.t0) / arc.durSec));
-      setArcStatus({ phase: arcPhaseAt(t), pct: Math.round(t * 100) });
+      const elapsed = v.ctx.currentTime - arc.t0;
+      const t = Math.max(0, Math.min(1, elapsed / arc.durSec));
+      setArcStatus({ phase: arcPhaseAt(t), pct: Math.round(t * 100), remainingSec: Math.max(0, arc.durSec - elapsed) });
+      setArcDriven(arcKnobs(t));
     }, 1000);
     return () => clearInterval(id);
   }, [playing, arcMin]);
+
+  // Taal position readout (display only — the pull() reads the refs). Ticks a
+  // touch faster than the arc so the sam indicator feels live. Idle when Off or
+  // when timing is free (no metric grid → no taal).
+  useEffect(() => {
+    const taal = getTaal(taalId);
+    if (!playing || !taal || timingMode === "free") {
+      setTaalPos(null);
+      return;
+    }
+    const id = setInterval(() => {
+      const v = voiceRef.current;
+      if (!v) return;
+      const clock = linkActiveRef.current
+        ? linkClockRef.current
+        : timingMode === "bpm"
+          ? internalClockRef.current
+          : null;
+      if (clock && clock.valid) setTaalPos(taalPositionAt(taal, clock.beatAt(v.ctx.currentTime)));
+    }, 180);
+    return () => clearInterval(id);
+  }, [playing, taalId, timingMode]);
 
   // On mount, load a shared scene if the URL carries one (?s=…).
   useEffect(() => {
@@ -485,6 +595,18 @@ export function App() {
     setActiveDegree(null);
     arcRef.current = null;
     setArcStatus(null);
+    setArcDriven(null);
+    setTaalPos(null);
+    takenKnobsRef.current.clear();
+    midiOutRef.current?.panic(); // no hung notes on stop
+  }
+
+  // Panic: silence external MIDI immediately and stop the melody. Works whether
+  // or not playback is running (e.g. to clear a hung external note). Retained
+  // under Stage Lock.
+  function panic() {
+    midiOutRef.current?.panic();
+    if (playingRef.current) stopPlayback();
   }
 
   async function togglePlay() {
@@ -501,6 +623,7 @@ export function App() {
     arcRef.current = arcMinRef.current > 0
       ? { t0: voice.ctx.currentTime, durSec: arcMinRef.current * 60 }
       : null;
+    takenKnobsRef.current.clear();
     const sched = new Scheduler({
       now: () => voiceRef.current!.ctx.currentTime,
       lookaheadSec: 0.12,
@@ -518,6 +641,9 @@ export function App() {
             setTimeout(stopPlayback, 0); // outside the tick — let scheduled notes ring out
           }
           kn = { ...kn, ...arcKnobs(Math.min(1, t)) };
+          // Manual takeover: knobs the user grabbed mid-arc stay under user
+          // control (the slider already shows the arc's value → no jump).
+          for (const k of takenKnobsRef.current) kn = { ...kn, [k]: knobsRef.current[k] };
         }
         const scale = tuningRef.current.scaleCents;
         const params = knobsToParams(kn, tonicHz);
@@ -530,6 +656,24 @@ export function App() {
           params.degreeBoost = ragaBoost(raga, 12);
           params.pakadSteps = raga.pakad;
           params.pakadProb = 0.35;
+          // Gamaka: authored ornaments from the raga, when enabled.
+          if (gamakaRef.current) {
+            params.gamaka = ragaOrnaments(raga);
+            params.gamakaEnabled = true;
+          }
+        }
+        // Taal: bias phrase/accent/rest/resolution toward structural points, but
+        // only when a metric clock is running — free timing stays rubato.
+        const taal = getTaal(taalRef.current);
+        if (taal) {
+          const clock = linkActiveRef.current
+            ? linkClockRef.current
+            : timingModeRef.current === "bpm"
+              ? internalClockRef.current
+              : null;
+          if (clock && clock.valid) {
+            params.taalBias = taalBias(taalPositionAt(taal, clock.beatAt(voiceRef.current!.ctx.currentTime)));
+          }
         }
         params.pullDegree = pullRef.current;
         const r = nextEvent(stateRef.current, scale, tonicHz, params, rngRef.current);
@@ -553,6 +697,7 @@ export function App() {
     });
     schedRef.current = sched;
     playingRef.current = true;
+    hasPlayedRef.current = true;
     sched.run(25);
     setPlaying(true);
   }
@@ -570,6 +715,46 @@ export function App() {
   const linkStatus = linkState.connected
     ? `${linkState.tempo.toFixed(1)} BPM · ${linkState.peers} peer${linkState.peers === 1 ? "" : "s"}`
     : "searching…";
+
+  // Display value for a knob: while the arc drives it (and the user hasn't taken
+  // it over), show the arc's live value so the slider matches what's playing —
+  // then grabbing it causes no discontinuity.
+  const KNOB_DEFAULT: Record<string, number> = { rhythm: 0.8, theme: 0.7, focus: 0 };
+  const knobVal = (key: keyof Knobs): number => {
+    const user = knobs[key] ?? KNOB_DEFAULT[key] ?? 0;
+    if (arcDriven && (ARC_KNOBS as readonly string[]).includes(key) && !takenKnobsRef.current.has(key as ArcKnobKey)) {
+      return (arcDriven as Record<string, number>)[key] ?? user;
+    }
+    return user;
+  };
+  const arcOwns = (key: ArcKnobKey) => !!arcDriven && !takenKnobsRef.current.has(key);
+
+  // Ladder feedback: per-degree role (Sa / vadi / samvadi / pakad) for the raga.
+  const ladderRoles: (string | null)[] | null = activeRaga
+    ? (() => {
+        const pakadDegrees = new Set(activeRaga.pakad.map((s) => ((s % 12) + 12) % 12));
+        return tuning.scaleCents.map((_, i) =>
+          i === 0 ? "Sa" : i === activeRaga.vadi ? "vadi" : i === activeRaga.samvadi ? "samvadi" : pakadDegrees.has(i) ? "pakad" : null,
+        );
+      })()
+    : null;
+
+  // Readout for the note sounding now: degree name + cents + ratio + role.
+  const activeReadout =
+    activeDegree != null && activeDegree < tuning.scaleCents.length
+      ? {
+          name: SARGAM[activeDegree] ?? String(activeDegree),
+          cents: tuning.scaleCents[activeDegree],
+          ratio: Math.pow(2, tuning.scaleCents[activeDegree] / 1200),
+          role: ladderRoles?.[activeDegree] ?? null,
+        }
+      : null;
+
+  const fmtRemaining = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${String(s).padStart(2, "0")}`;
+  };
 
   return (
     <main className="mraga">
@@ -645,24 +830,60 @@ export function App() {
         <button type="button" className="play" onClick={togglePlay} title="Start or stop the generative voice.">
           {playing ? "■ STOP" : "▶ PLAY"}
         </button>
+        <button
+          type="button"
+          className="chip-btn"
+          onClick={panic}
+          title="Panic — immediately silence external MIDI (all-notes-off + bend reset) and stop the line. Always available, even under Stage Lock."
+        >
+          ✋ panic
+        </button>
+        <button
+          type="button"
+          className={"chip-btn" + (stageLock ? " on" : "")}
+          onClick={toggleStageLock}
+          aria-pressed={stageLock}
+          title="Stage Lock — freezes the knobs so a stray touch can't wreck a performance. Transport, conducting (ladder taps), panic and intentional preset recall still work. Toggle off to edit knobs."
+        >
+          {stageLock ? "🔒 locked" : "🔓 lock"}
+        </button>
       </div>
+      {!playing && !hasPlayedRef.current && (
+        <div className="first-run deg-label" style={{ margin: "6px 0", opacity: 0.75 }}>
+          new here? <strong>pick a raga</strong> → <strong>▶ Play</strong> → tap the ladder to <strong>conduct</strong> → add <strong>◉ drone</strong> → try an <strong>ARC</strong>.
+        </div>
+      )}
 
       <PitchLadder
         scaleCents={tuning.scaleCents}
         activeDegree={activeDegree}
         allowedDegrees={ragaAllowed}
         pulledDegree={pullDegree}
+        roles={ladderRoles}
         onSelectDegree={conduct}
       />
+      <div className="ladder-readout deg-label" aria-live="polite" style={{ minHeight: 18, marginTop: 2 }}>
+        {activeReadout ? (
+          <>
+            <strong>{activeReadout.name}</strong>
+            {" · "}
+            {activeReadout.cents.toFixed(0)}¢ · {activeReadout.ratio.toFixed(3)}×
+            {activeReadout.role && <> · <span className="chip" style={{ padding: "0 6px" }}>{activeReadout.role}</span></>}
+          </>
+        ) : (
+          <span style={{ opacity: 0.6 }}>tap a column to conduct — pull the line toward a degree</span>
+        )}
+        {pullDegree != null && <span style={{ marginLeft: 8, opacity: 0.85 }}>→ pulling toward {SARGAM[pullDegree] ?? pullDegree}</span>}
+      </div>
 
-      <div className="knobs">
-        <Knob label="DENSITY" lowPole="sparse" highPole="busy" value={knobs.density} onChange={(v) => setKnobs({ ...knobs, density: v })} title="How often notes occur — sparse to busy (the note rate)." />
-        <Knob label="REGISTER" lowPole="low" highPole="high" value={knobs.register} onChange={(v) => setKnobs({ ...knobs, register: v })} title="Centre pitch of the melodic line — low to high." />
-        <Knob label="RESTLESS" lowPole="calm" highPole="roam" value={knobs.restlessness} onChange={(v) => setKnobs({ ...knobs, restlessness: v })} title="How far the line wanders from home — calm/home-bound to roaming." />
-        <Knob label="SILENCE" lowPole="full" highPole="spacious" value={knobs.silence} onChange={(v) => setKnobs({ ...knobs, silence: v })} title="How much rest and space between phrases — full to spacious." />
-        <Knob label="RHYTHM" lowPole="loose" highPole="tight" value={knobs.rhythm ?? 0.8} onChange={(v) => setKnobs({ ...knobs, rhythm: v })} title="Timing feel — loose/rubato to a tight, metronomic pulse (independent of the melody)." />
-        <Knob label="THEME" lowPole="free" highPole="locked" value={knobs.theme ?? 0.7} onChange={(v) => setKnobs({ ...knobs, theme: v })} title="Motif lock — invent new material (free) ↔ keep repeating one recurring figure (locked). Higher = less random." />
-        <Knob label="FOCUS" lowPole="wide" highPole="tight" value={knobs.focus ?? 0} onChange={(v) => setKnobs({ ...knobs, focus: v })} title="Note palette — all scale degrees (wide) ↔ a few characteristic notes (tight). Fewer notes = more coherent." />
+      <div className="knobs" aria-disabled={stageLock}>
+        <Knob label={arcOwns("density") ? "DENSITY ◆" : "DENSITY"} lowPole="sparse" highPole="busy" value={knobVal("density")} onChange={(v) => setKnob("density", v)} title={"How often notes occur — sparse to busy." + (stageLock ? " (Stage Lock on)" : arcOwns("density") ? " ◆ driven by the Arc — grab to take over." : "")} />
+        <Knob label={arcOwns("register") ? "REGISTER ◆" : "REGISTER"} lowPole="low" highPole="high" value={knobVal("register")} onChange={(v) => setKnob("register", v)} title={"Centre pitch of the melodic line — low to high." + (stageLock ? " (Stage Lock on)" : arcOwns("register") ? " ◆ driven by the Arc — grab to take over." : "")} />
+        <Knob label={arcOwns("restlessness") ? "RESTLESS ◆" : "RESTLESS"} lowPole="calm" highPole="roam" value={knobVal("restlessness")} onChange={(v) => setKnob("restlessness", v)} title={"How far the line wanders from home — calm to roaming." + (stageLock ? " (Stage Lock on)" : arcOwns("restlessness") ? " ◆ driven by the Arc — grab to take over." : "")} />
+        <Knob label={arcOwns("silence") ? "SILENCE ◆" : "SILENCE"} lowPole="full" highPole="spacious" value={knobVal("silence")} onChange={(v) => setKnob("silence", v)} title={"How much rest and space between phrases — full to spacious." + (stageLock ? " (Stage Lock on)" : arcOwns("silence") ? " ◆ driven by the Arc — grab to take over." : "")} />
+        <Knob label={arcOwns("rhythm") ? "RHYTHM ◆" : "RHYTHM"} lowPole="loose" highPole="tight" value={knobVal("rhythm")} onChange={(v) => setKnob("rhythm", v)} title={"Timing feel — loose/rubato to a tight, metronomic pulse." + (stageLock ? " (Stage Lock on)" : arcOwns("rhythm") ? " ◆ driven by the Arc — grab to take over." : "")} />
+        <Knob label="THEME" lowPole="free" highPole="locked" value={knobVal("theme")} onChange={(v) => setKnob("theme", v)} title={"Motif lock — invent new material (free) ↔ repeat one figure (locked). Higher = less random." + (stageLock ? " (Stage Lock on)" : "")} />
+        <Knob label="FOCUS" lowPole="wide" highPole="tight" value={knobVal("focus")} onChange={(v) => setKnob("focus", v)} title={"Note palette — all scale degrees (wide) ↔ a few characteristic notes (tight)." + (stageLock ? " (Stage Lock on)" : "")} />
       </div>
 
       <div className="row footer chip">
@@ -699,7 +920,7 @@ export function App() {
           </span>
         )}
 
-        <label className="sel" title="Performance arc — density, pulse and register follow a slow alap → jor → jhala trajectory; playback ends when the arc completes.">
+        <label className="sel" title="Performance arc — DENSITY, RHYTHM, SILENCE, REGISTER and RESTLESS follow a slow alap → jor → jhala trajectory (THEME and FOCUS stay yours). Grab a driven knob to take it over; playback ends when the arc completes.">
           ARC
           <select value={String(arcMin)} aria-label="performance arc" onChange={(e) => changeArc(parseInt(e.target.value, 10))}>
             <option value="0">off</option>
@@ -707,8 +928,43 @@ export function App() {
               <option key={m} value={String(m)}>{m} min</option>
             ))}
           </select>
-          {arcStatus && <span style={{ marginLeft: 6 }}>· {arcStatus.phase} {arcStatus.pct}%</span>}
+          {arcStatus && (
+            <span style={{ marginLeft: 6 }} aria-live="polite">
+              · {arcStatus.phase} {arcStatus.pct}% · {fmtRemaining(arcStatus.remainingSec)} left
+              {(() => {
+                const owned = ARC_KNOBS.filter((k) => !takenKnobsRef.current.has(k));
+                return owned.length ? <span style={{ opacity: 0.7 }}> · owns {owned.join(" ").toUpperCase()}</span> : <span style={{ opacity: 0.7 }}> · manual</span>;
+              })()}
+            </span>
+          )}
         </label>
+
+        <label className="sel" title="Taal — an optional rhythmic cycle (teental 16 / jhaptal 10 / rupak 7 / ektaal 12). Biases phrase starts, accents, rests and resolution toward the cycle's structural points (especially sam). Needs a metric grid (TIMING = bpm or link); free timing stays rubato.">
+          TAAL
+          <select value={taalId} aria-label="taal" onChange={(e) => changeTaal(e.target.value as TaalId)}>
+            <option value="off">off</option>
+            {TAAL_IDS.filter((id) => id !== "off").map((id) => (
+              <option key={id} value={id}>{TAALS[id as Exclude<TaalId, "off">].label} {TAALS[id as Exclude<TaalId, "off">].matras}</option>
+            ))}
+          </select>
+          {taalPos && (
+            <span style={{ marginLeft: 6 }} aria-live="polite" title="Current cycle position">
+              · {taalPos.matra + 1}/{getTaal(taalId)!.matras}
+              {taalPos.isSam ? " ✳ sam" : taalPos.isKhali ? " ○ khali" : taalPos.isVibhagStart ? " |" : ""}
+            </span>
+          )}
+        </label>
+
+        <button
+          type="button"
+          className={"chip-btn" + (gamakaOn ? " on" : "")}
+          onClick={toggleGamaka}
+          aria-pressed={gamakaOn}
+          title="Gamaka — authored ornaments (meend glide, andolan oscillation, kan grace, rare murki) drawn from the selected raga's grammar. Needs a raga; deterministic and seeded."
+        >
+          gamaka {gamakaOn ? "on" : "off"}
+          {gamakaOn && !activeRaga && <span style={{ opacity: 0.7 }}> (pick a raga)</span>}
+        </button>
 
         <button
           type="button"
@@ -768,12 +1024,21 @@ export function App() {
 
         <button
           type="button"
-          className="chip-btn"
+          className={"chip-btn" + (midiName ? " on" : "")}
           onClick={toggleMidi}
+          aria-pressed={!!midiName}
           title="Send the generated notes to an external MIDI synth/DAW (microtonal via pitch-bend). Click to connect the first available output."
         >
           MIDI {midiName ? `· ${midiName}` : "off"}
         </button>
+
+        <label className="sel" title="MIDI mode. Single Channel: works with any synth, but a new note's pitch-bend retunes every note still ringing (overlap limitation). MPE: rotates notes across channels 2–8, each with its own bend, so overlapping microtonal notes never retune each other (needs an MPE-capable synth).">
+          MODE
+          <select value={midiMode} aria-label="midi mode" onChange={(e) => changeMidiMode(e.target.value as MidiMode)}>
+            <option value="single">single ch</option>
+            <option value="mpe">MPE 2–8</option>
+          </select>
+        </label>
       </div>
     </main>
   );

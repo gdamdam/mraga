@@ -13,6 +13,8 @@ import {
   hzToNearestStepPos,
   restingNotes,
 } from "./tuning";
+import { planGamaka, type GamakaRules } from "./gamaka";
+import type { TaalBias } from "./taal";
 
 export type NoteEvent = {
   kind: "note";
@@ -50,6 +52,13 @@ export type EngineParams = {
   pakadProb?: number;      // chance a fresh phrase is the pakad
   // Conducting: a tapped ladder degree the line is pulled toward.
   pullDegree?: number | null;
+  // Gamaka (ornaments): authored per-raga rules + a master enable. When
+  // disabled (default) no rng is consumed, so existing seeds reproduce exactly.
+  gamaka?: GamakaRules | null;
+  gamakaEnabled?: boolean;
+  // Taal: structural bias for the current cycle position (accent / rest /
+  // resolution multipliers). Absent => free/rubato (no taal). Mild by design.
+  taalBias?: TaalBias | null;
 };
 
 export type EngineState = {
@@ -63,6 +72,7 @@ export type EngineState = {
   prevPitchHz: number | null;
   pendingPhraseEnd: boolean;
   sameRun: number; // consecutive repeats of the current pitch (anti-stuck guard)
+  pending: NoteEvent[]; // queued ornament micro-notes to emit before advancing
 };
 
 export function initState(): EngineState {
@@ -77,6 +87,7 @@ export function initState(): EngineState {
     prevPitchHz: null,
     pendingPhraseEnd: false,
     sameRun: 0,
+    pending: [],
   };
 }
 
@@ -271,7 +282,17 @@ export function nextEvent(
   rng: () => number,
 ): { event: EngineEvent; state: EngineState } {
   const scaleLen = scaleCents.length;
+  // Drain any queued ornament micro-notes first — they carry no melodic state
+  // change and consume no rng, so determinism of the underlying line is intact.
+  if (state.pending.length > 0) {
+    const [head, ...rest] = state.pending;
+    return { event: head, state: { ...state, pending: rest } };
+  }
   const next: EngineState = { ...state };
+  // Taal structural bias (mild multipliers around 1.0; null => free/rubato).
+  const tRest = Math.max(0, Math.min(2, params.taalBias?.rest ?? 1));
+  const tAccent = Math.max(0, Math.min(1.6, params.taalBias?.accent ?? 1));
+  const tResolution = Math.max(0.5, Math.min(3, params.taalBias?.resolution ?? 1));
   const restingBase = restingNotes(scaleCents);
   // Vadi/samvadi boost: the raga's emphasized degrees behave as strong
   // resting notes (resolution targets, longer dwell, slight accent).
@@ -285,7 +306,8 @@ export function nextEvent(
   // 1. Rest? A breath sometimes follows a completed phrase; SILENCE adds ambient
   //    rests on top. (Not every phrase breathes — phrases also flow together.)
   const phraseBreath = state.pendingPhraseEnd;
-  if ((phraseBreath && rng() < 0.6) || rng() < params.pRest) {
+  // Taal biases rests toward khali and away from sam (tRest scales rest odds).
+  if ((phraseBreath && rng() < 0.6 * tRest) || rng() < params.pRest * tRest) {
     const phraseEnd = phraseBreath || rng() < 0.3;
     const ioi = sampleIoi(params, rng, phraseEnd ? params.phrasePauseFactor : 1);
     if (phraseEnd) next.pendingPhraseEnd = false;
@@ -302,8 +324,10 @@ export function nextEvent(
 
   // 2. Need a new phrase? Build one (repeat the last motif, or a fresh contour).
   if (state.phraseIdx >= state.phrase.length) {
+    // Near sam, strengthen the pull to resting notes so phrases resolve there.
+    const restingForTarget = tResolution !== 1 ? resting.map((r) => r * tResolution) : resting;
     const built = buildPhrase(
-      curStep, centerStep, lo, hi, scaleLen, resting, params, rng, state.lastDeltas, state.lastRhythm, up, down, allowed,
+      curStep, centerStep, lo, hi, scaleLen, restingForTarget, params, rng, state.lastDeltas, state.lastRhythm, up, down, allowed,
     );
     next.phrase = built.steps;
     next.phraseRhythm = built.rhythm;
@@ -344,7 +368,7 @@ export function nextEvent(
   const pitchHz = degreeToHz(scaleCents, tonicHz, degreeIndex, octave);
   const restingStrength = resting[degreeIndex];
   const dwellMult = 1 + restingStrength * (params.restingDwell - 1);
-  const glideFromHz =
+  let glideFromHz =
     state.prevPitchHz != null && rng() < params.glideProbability ? state.prevPitchHz : undefined;
 
   next.degreeIndex = degreeIndex;
@@ -352,20 +376,59 @@ export function nextEvent(
   next.prevPitchHz = pitchHz;
 
   const baseVel = 0.6 + rng() * 0.2;
-  const velocity = Math.min(1, baseVel + (phraseStart ? 0.12 : 0) + restingStrength * 0.1);
+  // Taal accent scales emphasis (strongest at sam).
+  const velocity = Math.min(1, (baseVel + (phraseStart ? 0.12 : 0) + restingStrength * 0.1) * tAccent);
   const ioiSec = sampleIoi(params, rng, mult);
 
-  return {
-    event: {
-      kind: "note",
-      pitchHz,
-      glideFromHz,
-      velocity,
-      ioiSec,
-      durationHint: Math.min(8, ioiSec * dwellMult * 1.4),
-      degreeIndex,
-      octave,
+  // Gamaka: authored per-raga ornaments. Disabled (default) consumes NO rng, so
+  // existing seeds reproduce identically. When enabled, the plan produces short
+  // micro-notes emitted around the main note via the pending queue.
+  const plan = planGamaka(
+    {
+      degreeIndex, octave, scaleCents, tonicHz, pitchHz,
+      prevPitchHz: state.prevPitchHz,
+      ascending: nextStep >= curStep,
+      isPhraseStart: phraseStart,
+      restingStrength,
+      baseIoiSec: params.baseIoiSec,
     },
-    state: next,
+    params.gamaka,
+    params.gamakaEnabled ?? false,
+    rng,
+    allowed,
+  );
+  if (plan.glideFromHz !== undefined) glideFromHz = plan.glideFromHz;
+
+  const mkMicro = (m: { pitchHz: number; velocity: number; ioiSec: number; glideFromHz?: number }): NoteEvent => ({
+    kind: "note",
+    pitchHz: m.pitchHz,
+    glideFromHz: m.glideFromHz,
+    velocity: Math.min(1, m.velocity * tAccent),
+    ioiSec: m.ioiSec,
+    durationHint: Math.min(8, m.ioiSec * 2),
+    degreeIndex,
+    octave,
+  });
+  const graceEvents = plan.graces.map(mkMicro);
+  const tailEvents = plan.tail.map(mkMicro);
+  // Graces steal time from the main note so its onset stays near the grid.
+  const graceTime = graceEvents.reduce((s, e) => s + e.ioiSec, 0);
+  const mainIoi = Math.max(0.05, ioiSec - graceTime);
+
+  const mainNote: NoteEvent = {
+    kind: "note",
+    pitchHz,
+    glideFromHz,
+    velocity,
+    ioiSec: mainIoi,
+    durationHint: Math.min(8, mainIoi * dwellMult * 1.4),
+    degreeIndex,
+    octave,
   };
+
+  // Order: graces → main → andolan tail. The main note carries the melodic
+  // state change; the queued micro-notes are transient (drained without rng).
+  const sequence: NoteEvent[] = [...graceEvents, mainNote, ...tailEvents];
+  next.pending = sequence.slice(1);
+  return { event: sequence[0], state: next };
 }

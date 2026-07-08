@@ -27,12 +27,36 @@ async function deflate(bytes: Uint8Array): Promise<Uint8Array> {
   return new Uint8Array(blob);
 }
 
+// Cap the decompressed size: read the stream chunk-by-chunk and abort once the
+// running total exceeds the limit, so a tiny "deflate bomb" payload can never
+// force a huge allocation. A real mdrone scene inflates to well under this.
+const MAX_INFLATED_BYTES = 256 * 1024;
+
 async function inflate(bytes: Uint8Array): Promise<Uint8Array> {
   const ds = new DecompressionStream("deflate");
-  const blob = await new Response(
-    new Response(bytes as unknown as BodyInit).body!.pipeThrough(ds),
-  ).arrayBuffer();
-  return new Uint8Array(blob);
+  const stream = new Response(bytes as unknown as BodyInit).body!.pipeThrough(ds);
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      total += value.length;
+      if (total > MAX_INFLATED_BYTES) {
+        await reader.cancel();
+        throw new Error("mraga: decompressed share payload too large");
+      }
+      chunks.push(value);
+    }
+  }
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.length;
+  }
+  return out;
 }
 
 export async function encodeScene(
@@ -57,11 +81,22 @@ export function extractPayloadFromUrl(
   return null;
 }
 
+// Bound the raw payload too — a legit mdrone link is a few hundred base64 chars.
+const MAX_PAYLOAD_CHARS = 32 * 1024;
+
 export async function decodePayload(payload: string, compressed: boolean): Promise<unknown> {
+  if (typeof payload !== "string" || payload.length > MAX_PAYLOAD_CHARS) {
+    throw new Error("mraga: share payload too large");
+  }
   let bytes = urlSafeB64ToBytes(payload);
   if (compressed) {
-    try { bytes = await inflate(bytes); }
-    catch { throw new Error("mraga: failed to decompress share payload"); }
+    try {
+      bytes = await inflate(bytes);
+    } catch (e) {
+      // Preserve the size-guard rejection; wrap only genuine corruption.
+      if (e instanceof Error && /too large/.test(e.message)) throw e;
+      throw new Error("mraga: failed to decompress share payload");
+    }
   }
   try { return JSON.parse(new TextDecoder().decode(bytes)); }
   catch { throw new Error("mraga: share payload is not valid JSON"); }

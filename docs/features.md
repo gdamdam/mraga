@@ -31,9 +31,53 @@ active tuning has 12 degrees):
   fifth (Sa/vadi/samvadi never trimmed).
 
 Shipped ragas (practical approximations, not scholarly transcriptions):
-Yaman, Bhairav, Bhairavi, Desh, Malkauns, Durga. Adding one = a new entry in
-`RAGAS` — the tests in tests/unit/ragas.test.ts validate well-formedness
-automatically. The ladder dims degrees outside the raga.
+Yaman, Bhairav, Bhairavi, Desh, Malkauns, Durga, Bhupali, Kafi, Khamaj, Todi,
+Marwa, Ahir Bhairav (12). Each entry also carries a rough **time** association,
+optional **weak/avoid** degrees (durbal — kept usable but trimmed first under
+FOCUS and never a resting target), and authored **ornaments** (see Gamaka).
+Adding one = a new entry in `RAGAS` — the tests in tests/unit/ragas.test.ts
+validate well-formedness automatically. The ladder dims degrees outside the raga.
+
+## Gamaka ornaments (src/gamaka.ts, engine masks)
+
+Authored, seeded ornaments drawn from a raga's `ornaments` grammar (never generic
+random decoration). Toggle **gamaka** in the footer (needs a raga). Four kinds,
+rendered as short micro-notes emitted around the main note via the engine's
+pending queue (no audio-layer change — precise onsets, real glide):
+- **meend** — a slide *into* the note (per-raga glide).
+- **kan** — a grace note approaching from an adjacent scale degree (below when
+  ascending, above when descending).
+- **andolan** — a slow few-cents oscillation on held resting notes (e.g. komal
+  Re/Dha in Bhairav).
+- **murki** — a rare fast ornamental turn.
+Disabled by default and consumes **no rng when off**, so existing seeds/links
+reproduce identically. Determinism, pitch bounds, direction and disabled
+behaviour are tested (tests/unit/gamaka.test.ts, engineGamaka.test.ts).
+
+## Taal cycle (src/taal.ts)
+
+Optional rhythmic cycle: Off · Teental 16 · Jhaptal 10 · Rupak 7 · Ektaal 12.
+A pure module models matra / vibhag / sam / khali and yields mild structural
+**bias** weights (accent, phrase-start, resolution, rest) that lean the engine
+toward structural points — especially **sam** (resolution) and **khali**
+(breathing). Only active on a metric grid (TIMING = bpm/link); **free timing
+stays rubato** (no taal bias). The footer shows the current matra + sam/khali
+compactly — a gravitational field, not a drum machine. Link-timing compatible.
+Not shown, it is part of the share scene (defaulted for old links).
+
+## Stage Lock
+
+A footer 🔒 toggle that freezes the knobs so a stray touch can't wreck a live
+performance. Transport (Play/Stop), **panic**, conducting (ladder taps) and
+intentional preset recall still work. The transport row also has a ✋ **panic**
+button (all-notes-off + bend reset on MIDI, stop the line) available even locked.
+
+## MIDI modes (src/midi.ts, src/mpe.ts)
+
+**MODE = Single Channel** (all notes ch 1; overlap retunes) or **MPE** (notes
+rotate across channels 2–8, per-note bend before note-on, bend reset after
+note-off). The pure allocator handles voice-stealing, ownership, panic, mode
+switch and device disconnect (tests/unit/mpe.test.ts).
 
 ## Tanpura drone (src/tanpura.ts + drone pool in voice.ts)
 

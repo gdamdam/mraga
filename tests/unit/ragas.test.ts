@@ -22,6 +22,47 @@ describe("raga definitions", () => {
     expect(getRaga("nope")).toBeNull();
     expect(getRaga(null)).toBeNull();
   });
+
+  it("ships 10–12 carefully authored ragas", () => {
+    expect(RAGA_IDS.length).toBeGreaterThanOrEqual(10);
+    expect(RAGA_IDS.length).toBeLessThanOrEqual(12);
+  });
+
+  it("every raga has a contextual time note", () => {
+    for (const id of RAGA_IDS) {
+      expect(typeof RAGAS[id].time).toBe("string");
+      expect(RAGAS[id].time!.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("ornament rules (where present) reference in-range degrees with valid probs", () => {
+    for (const id of RAGA_IDS) {
+      const orn = RAGAS[id].ornaments;
+      if (!orn) continue;
+      for (const rule of Object.values(orn)) {
+        expect(Array.isArray(rule.degrees)).toBe(true);
+        for (const d of rule.degrees) {
+          expect(d).toBeGreaterThanOrEqual(0);
+          expect(d).toBeLessThan(12);
+        }
+        expect(rule.prob).toBeGreaterThanOrEqual(0);
+        expect(rule.prob).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  it("weak/avoid degrees (where present) are within the raga's own note set", () => {
+    for (const id of RAGA_IDS) {
+      const r = RAGAS[id];
+      if (!r.weak) continue;
+      const own = new Set([...r.aroha, ...r.avaroha]);
+      for (const d of r.weak) {
+        expect(d).toBeGreaterThanOrEqual(0);
+        expect(d).toBeLessThan(12);
+        expect(own.has(d)).toBe(true);
+      }
+    }
+  });
 });
 
 describe("ragaMasks", () => {
@@ -48,6 +89,14 @@ describe("ragaMasks", () => {
     expect(m.avaroha[0]).toBe(true);
     expect(m.avaroha[r.vadi]).toBe(true);
     expect(m.avaroha[r.samvadi]).toBe(true);
+  });
+
+  it("weak/avoid degrees drop first under FOCUS (Khamaj Re)", () => {
+    // Khamaj marks Re (2) weak; at focus=1 it should be trimmed out of avaroha.
+    const full = ragaMasks(RAGAS.khamaj, 12, 0);
+    expect(full.avaroha[2]).toBe(true); // present at full focus
+    const tight = ragaMasks(RAGAS.khamaj, 12, 1);
+    expect(tight.avaroha[2]).toBe(false); // dropped first when narrowing
   });
 
   it("Sa is always allowed even if a mask set omitted it", () => {

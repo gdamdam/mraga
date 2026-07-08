@@ -40,17 +40,23 @@ header). Never edit the vendored files — change upstream and re-copy via
 Publishing is off by default and session-transient (never persisted) per
 suite convention. Chrome/Firefox only.
 
-## MIDI out (src/midi.ts)
+## MIDI out (src/midi.ts, src/mpe.ts)
 
 Optional Web MIDI: each note = nearest MIDI note + 14-bit pitch bend for the
 cents offset (±2 semitone GM range), note clamped 0..127, scheduled note-off.
-First available output, channel 1.
+First available output. Two selectable modes:
 
-**Known limitation**: pitch bend is a channel-global MIDI message, so on a
-single channel a new note's bend retunes every still-ringing previous note.
-The proper fix is MPE-style channel rotation —
-deliberately deferred (changes what external synths receive; needs a UI
-switch). See development.md roadmap.
+- **Single Channel** (ch 1): works with any synth. Its **overlap limitation** —
+  pitch bend is a channel-global message, so a new note's bend retunes every
+  still-ringing note — is inherent to single-channel MIDI and clearly documented
+  in the UI tooltip.
+- **MPE**: rotates notes across channels 2–8, sends the per-note bend *before*
+  note-on and resets it after note-off, so overlapping microtonal notes keep
+  their own tuning. Voice-stealing (oldest-first), panic, stop, output change
+  and disconnect are handled in the pure allocator `src/mpe.ts` (unit-tested).
+
+MIDI mode is a device-local preference (`mraga-midi-mode`), not part of a shared
+scene. Panic (✋ / on stop) sends all-notes-off + bend reset on every channel.
 
 ## Share links
 

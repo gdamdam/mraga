@@ -16,6 +16,8 @@ const scene = (seed: number): MragaScene => ({
   raga: "",
   drone: false,
   droneLevel: 0.5,
+  taal: "off",
+  gamaka: false,
 });
 
 describe("presets", () => {

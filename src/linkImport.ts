@@ -34,6 +34,9 @@ function isValidDegrees(d: unknown): d is number[] {
 
 export function sceneToTuning(scene: unknown): PortableTuning {
   try {
+    // Untrusted decoded payload — loose optional-chained access is deliberate;
+    // every field is validated below before use.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const s = scene as any;
     const root = s?.drone?.root;
     const octave = s?.drone?.octave;

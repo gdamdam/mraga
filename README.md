@@ -23,7 +23,8 @@
 - **Sounds intentional, not random** — a scale-aware engine builds directed phrase contours that resolve onto consonant "resting" notes, repeats and transposes motifs, and breathes between phrases — over a steady pulse, with subtle glides.
 - **Six struck voices** — santoor, koto, sitar, mallet, qanun, kalimba — one parameterized Karplus–Strong string, switchable live.
 - **Locks to tempo** — free/ametric by default, or snap note onsets to an internal BPM grid, or to **Ableton Link** via the shared m-family bridge.
-- **Speaks MIDI** — send the line to an external synth/DAW, microtonal via per-note pitch-bend.
+- **Speaks MIDI** — send the line to an external synth/DAW, microtonal via per-note pitch-bend, in Single-Channel or **MPE** mode (channels 2–8, per-note bend).
+- **Speaks raga** — ~12 authored ragas (aroha/avaroha, vadi/samvadi, pakad, weak-note behaviour, time association) with seeded **gamaka** ornaments (meend, andolan, kan, murki) and an optional **taal** cycle (teental/jhaptal/rupak/ektaal) that biases phrasing toward sam.
 - **Saves, shares, rerolls** — name and recall sounds locally, copy a link that restores the exact sound (including the seed), and reroll the improvisation with one click.
 - **Has character** — a warm, incandescent palette (five themes), a glowing block-art wordmark that flickers with the voice, and a live pitch-ladder that makes the microtuning visible.
 - **Works offline + installs** — service worker; once loaded it runs in airplane mode, and installs as a standalone PWA.
@@ -124,6 +125,13 @@ mraga is **tuning-aware** in a way a generic looper/arpeggiator can't be — it 
 
 Toggle **MIDI** in the footer to send the generated notes to the first available Web MIDI output. Because mraga is microtonal, each note is sent as the nearest MIDI note **plus a 14-bit pitch-bend** for the cents offset (±2-semitone bend range). Optional and graceful — it does nothing if Web MIDI is unavailable.
 
+Pick a **MODE**:
+
+- **Single Channel** — every note on channel 1. Works with any synth, but because pitch-bend is a per-channel message, a new note's bend retunes every note still ringing (the documented overlap limitation).
+- **MPE** — rotates notes across channels **2–8**, sending each note's pitch-bend *before* its note-on and resetting the bend after note-off, so overlapping microtonal notes never retune each other. Handles voice-stealing, panic, stop, output changes and disconnects cleanly. Use with an MPE-capable synth.
+
+The channel allocation, bend bytes, ownership, stealing, cleanup and panic logic is a pure, exhaustively unit-tested module (`src/mpe.ts`).
+
 ---
 
 ## Look & Feel
@@ -142,10 +150,11 @@ Standard Vite app:
     npm run dev      # build worklet + vite dev server
     npm test         # vitest unit suite
     npm run build    # production build (PWA) → dist/
+    npm run check    # gate: lint + typecheck + test + build
 
-Every push to `main` builds and deploys to GitHub Pages via `.github/workflows/deploy.yml`.
+Every push to `main` runs `npm run check` then deploys to GitHub Pages via `.github/workflows/deploy.yml`.
 
-Note: the service-worker cache version in `public/sw.js` is hardcoded — bump it to match `package.json` on release.
+Note: the service-worker cache version is derived from `package.json` at build time (`scripts/stamp-sw-version.mjs` stamps `dist/sw.js`), so only the `package.json` version needs bumping on release.
 
 ---
 

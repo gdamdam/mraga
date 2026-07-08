@@ -26,11 +26,23 @@ const SAMPLE_SCENE: MragaScene = {
   raga: "yaman",
   drone: true,
   droneLevel: 0.6,
+  taal: "teental",
+  gamaka: true,
 };
 
 // ---------------------------------------------------------------------------
 // Round-trip
 // ---------------------------------------------------------------------------
+
+describe("backward compatibility", () => {
+  it("a pre-1.0 scene (no taal/gamaka) decodes with safe defaults", () => {
+    const { taal: _t, gamaka: _g, ...pre10 } = SAMPLE_SCENE;
+    const decoded = decodeScene(bytesToUrlSafeB64(new TextEncoder().encode(JSON.stringify(pre10))));
+    expect(decoded).not.toBeNull();
+    expect(decoded!.taal).toBe("off");
+    expect(decoded!.gamaka).toBe(false);
+  });
+});
 
 describe("round-trip", () => {
   it("encodeScene + decodeScene produces a deeply equal scene", () => {
