@@ -21,8 +21,9 @@ import { sceneToUrl, sceneFromUrl, type MragaScene } from "./mragaScene";
 import { loadPresets, savePresets, upsertPreset, deletePreset, type Preset } from "./presets";
 import { createMidiOut, type MidiOut, type MidiMode } from "./midi";
 
-// Block-art wordmark in mdrone's style (rendered with the .title-art glow).
-const LOGO = "█▀▄▀█ █▀█ █▀█ █▀▀ █▀█\n█ ▀ █ █▀▄ █▀█ █▄█ █▀█";
+// Header wordmark (suite logo). BASE_URL keeps the path correct under the GH
+// Pages subpath; the file is precached by the service worker for offline.
+const WORDMARK_URL = `${import.meta.env.BASE_URL}mraga-3-wordmark.svg`;
 
 // Sargam degree names (matches PitchLadder) — for the active-note readout.
 const SARGAM = ["Sa", "r", "R", "g", "G", "m", "M", "P", "d", "D", "n", "N"];
@@ -761,7 +762,9 @@ export function App() {
       <div className="row">
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <h1 ref={titleRef} className="title-art" aria-label="mraga">{LOGO}</h1>
+            <h1 ref={titleRef} className="title-art wordmark" aria-label="mraga" style={{ margin: 0 }}>
+              <img src={WORDMARK_URL} alt="mraga" style={{ height: 44, display: "block" }} draggable={false} />
+            </h1>
             <span className="chip" title="mraga version">v{__APP_VERSION__}</span>
           </div>
           <div className="tagline">a conducted line over the drone</div>

@@ -10,7 +10,7 @@ self.addEventListener("install", (e) => {
   e.waitUntil(
     caches
       .open(CACHE)
-      .then((c) => c.addAll(["./", "./index.html"]))
+      .then((c) => c.addAll(["./", "./index.html", "./mraga-3-wordmark.svg", "./mraga-1-glyph.svg", "./manifest.webmanifest"]))
       .then(() => self.skipWaiting()),
   );
 });
