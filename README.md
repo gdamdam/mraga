@@ -4,6 +4,7 @@
   <a href="https://github.com/gdamdam/mraga"><img src="https://img.shields.io/github/package-json/v/gdamdam/mraga?color=blue&label=version" alt="Version"></a>
   <a href="https://github.com/gdamdam/mraga/actions/workflows/deploy.yml"><img src="https://github.com/gdamdam/mraga/actions/workflows/deploy.yml/badge.svg" alt="Deploy"></a>
   <a href="https://github.com/gdamdam/mraga/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License"></a>
+  <img src="https://img.shields.io/badge/tests-184%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/Web%20Audio-API-FF6600" alt="Web Audio API">
   <img src="https://img.shields.io/badge/AudioWorklet-DSP-FF6600" alt="AudioWorklet">
 </p>
@@ -107,7 +108,7 @@ One parameterized Karplus–Strong string; each flavour is a parameter set over 
 mraga is **tuning-aware** in a way a generic looper/arpeggiator can't be — it plays in the drone's exact cents.
 
 - **Decodes mdrone share links** (`?z=` deflate / `?b=` plain, the same codec mdrone produces) to extract the tonic (note + octave → Hz) and the per-degree microtonal cents.
-- **Six built-in tuning tables** vendored from mdrone — equal (12-TET), just 5-limit, ¼-comma meantone, harmonic series, maqam rast, slendro — plus any **custom 13-degree table** carried inline in the link.
+- **Tuning unified with mdrone** — the pitch resolver and the built-in tuning library are vendored VERBATIM from mdrone's shared tuning core (`src/vendor/tuning-core/`, re-synced via `npm run vendored:sync`), so the two apps can never drift on cents. Six built-ins — equal (12-TET), just 5-limit, ¼-comma meantone, harmonic series, maqam rast, slendro — plus any **custom table of arbitrary length N** carried inline in the link (no longer capped at 12 notes).
 - **Tolerant** — a malformed or future-version link degrades to a sensible default scale rather than crashing.
 - **Pitch ladder** — the signature visual: each scale degree is a column; the degree sounding now lights and decays, making the microtuning visible.
 
@@ -163,7 +164,7 @@ Note: the service-worker cache version is derived from `package.json` at build t
 A core of **pure, seeded, audio-free units** (exhaustively unit-tested) wrapped by a thin Web Audio layer and React UI:
 
 - `engine` — the generative brain (directed contours + motif repetition + steady pulse). Pure, deterministic, the most thoroughly tested unit.
-- `tuning`, `linkImport`, `shareCodec`, `builtinTunings` — decode an mdrone link → tonic + scale; pitch-lattice math and resting-note detection.
+- `tuning`, `linkImport`, `shareCodec`, `builtinTunings` — decode an mdrone link → tonic + scale; pitch-lattice math and resting-note detection. The resolver + builtin library are the shared tuning core vendored from mdrone (`vendor/tuning-core/`); `linkImport` supports scales of arbitrary length N.
 - `conducting` — maps the seven knobs to engine parameters.
 - `voicePresets` + the Karplus–Strong `voice` worklet — one parameterized struck-string voice with a small voice pool and a reverb send.
 - `scheduler` — a Web Audio lookahead scheduler with optional onset quantization (bpm / Link).

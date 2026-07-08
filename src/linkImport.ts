@@ -4,11 +4,19 @@ import { getBuiltinDegrees } from "./builtinTunings";
 
 export type PortableTuning = {
   tonicHz: number;
-  scaleCents: number[]; // length 12, [0] === 0
+  scaleCents: number[]; // arbitrary length N, [0] === 0 (was hard-coded to 12)
   label: string;
 };
 
 const PITCH_CLASSES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+
+// A degrees array is the legacy [scaleCents…, period] form; the sounding scale
+// is everything up to (but not including) the trailing repeat period. This
+// preserves the full scale for tunings of ANY length N — previously the scale
+// was truncated to 12 via `slice(0, 12)`, silently dropping extra degrees.
+function soundingDegrees(degrees: number[]): number[] {
+  return degrees.slice(0, Math.max(0, degrees.length - 1));
+}
 
 // ../mdrone/src/scene/droneSceneModel.ts:42–46
 function pitchToFreq(root: string, octave: number): number {
@@ -19,14 +27,17 @@ function pitchToFreq(root: string, octave: number): number {
 
 export const DEFAULT_TUNING: PortableTuning = Object.freeze({
   tonicHz: pitchToFreq("C", 4),
-  scaleCents: getBuiltinDegrees("equal").slice(0, 12),
+  scaleCents: soundingDegrees(getBuiltinDegrees("equal")),
   label: "C · Equal (12-TET)",
 });
 
+// Accept a [scaleCents…, period] array of ANY length N (≥ 2: at least one
+// sounding degree plus the period). Previously this required length ≥ 13,
+// locking custom tunings to 12 notes.
 function isValidDegrees(d: unknown): d is number[] {
   return (
     Array.isArray(d) &&
-    d.length >= 13 &&
+    d.length >= 2 &&
     d.every((n) => typeof n === "number" && Number.isFinite(n)) &&
     d[0] === 0
   );
@@ -56,7 +67,7 @@ export function sceneToTuning(scene: unknown): PortableTuning {
       tuningLabel = s?.drone?.tuningId ?? "Equal (12-TET)";
     }
 
-    return { tonicHz, scaleCents: degrees.slice(0, 12), label: `${root} · ${tuningLabel}` };
+    return { tonicHz, scaleCents: soundingDegrees(degrees), label: `${root} · ${tuningLabel}` };
   } catch {
     return DEFAULT_TUNING;
   }

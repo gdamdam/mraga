@@ -1,6 +1,14 @@
 // src/tuning.ts
 // Pure pitch math over a scale lattice. A "step position" is an integer index
 // into the lattice: stepPos = octave * scaleLen + degreeIndex.
+//
+// The pitch resolver is unified with mdrone: `degreeToHz` delegates to the
+// vendored shared tuning core (vendor/tuning-core/model) instead of a bespoke
+// copy, so mraga and mdrone resolve identical frequencies. The public
+// signature is unchanged — engine.ts / scheduler.ts / gamaka.ts are untouched.
+// The lattice helpers below (step-position math, resting-note detection) are
+// mraga-domain and stay local.
+import { degreeToHz as resolveDegreeToHz } from "./vendor/tuning-core/model";
 
 export function degreeToHz(
   scaleCents: number[],
@@ -8,11 +16,8 @@ export function degreeToHz(
   degreeIndex: number,
   octave: number,
 ): number {
-  if (degreeIndex < 0 || degreeIndex >= scaleCents.length) {
-    throw new RangeError(`degreeToHz: degreeIndex ${degreeIndex} out of range [0, ${scaleCents.length})`);
-  }
-  const cents = scaleCents[degreeIndex] + 1200 * octave;
-  return tonicHz * Math.pow(2, cents / 1200);
+  // Octave period defaults to 1200¢ in the core, matching the prior behavior.
+  return resolveDegreeToHz({ tonicHz, scaleCents, name: "" }, degreeIndex, octave);
 }
 
 export function degreeToStepPos(degreeIndex: number, octave: number, scaleLen: number): number {

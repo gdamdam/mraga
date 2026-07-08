@@ -1,41 +1,36 @@
 // src/builtinTunings.ts
-// Vendored verbatim from ../mdrone/src/microtuning.ts. A share link that
-// references a builtin tuningId carries no inline cents, so mraga resolves
-// the degrees from this table.
+// The builtin tuning tables are now unified with mdrone: they are DERIVED from
+// the vendored shared tuning library (vendor/tuning-core/builtins) rather than
+// re-declared here, so mraga and mdrone can never drift on cents values. A
+// share link that references a builtin tuningId carries no inline cents, so
+// mraga resolves the degrees from this table.
+//
+// The public shape is unchanged: `BUILTIN_TUNINGS` is still keyed by mraga's
+// short ids and each `degrees` array is the legacy 13-slot form
+// [scaleCents…, period] (12 sounding degrees + the 1200¢ octave).
+import { BUILTIN_PORTABLE_TUNINGS } from "./vendor/tuning-core/builtins";
+import { periodCents } from "./vendor/tuning-core/model";
+
 export type BuiltinTuning = { id: string; label: string; degrees: number[] };
 
-export const BUILTIN_TUNINGS: Record<string, BuiltinTuning> = {
-  equal: {
-    id: "equal",
-    label: "Equal (12-TET)",
-    degrees: [0, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200],
-  },
-  just5: {
-    id: "just5",
-    label: "Just 5-limit",
-    degrees: [0, 111.73, 203.91, 315.64, 386.31, 498.04, 582.51, 701.96, 813.69, 884.36, 996.09, 1088.27, 1200],
-  },
-  meantone: {
-    id: "meantone",
-    label: "¼-comma Meantone",
-    degrees: [0, 76.05, 193.16, 310.26, 386.31, 503.42, 579.47, 696.58, 772.63, 889.74, 1006.84, 1082.89, 1200],
-  },
-  harmonics: {
-    id: "harmonics",
-    label: "Harmonic Series",
-    degrees: [0, 104.96, 203.91, 266.87, 386.31, 498.04, 551.32, 701.96, 813.69, 884.36, 968.83, 1088.27, 1200],
-  },
-  "maqam-rast": {
-    id: "maqam-rast",
-    label: "Maqam Rast",
-    degrees: [0, 100, 200, 350, 400, 500, 600, 700, 800, 900, 1050, 1100, 1200],
-  },
-  slendro: {
-    id: "slendro",
-    label: "Slendro",
-    degrees: [0, 80, 160, 240, 360, 480, 600, 720, 800, 880, 960, 1080, 1200],
-  },
+// mraga's short ids ↔ the shared library's canonical tuning names. Order and
+// cents match mdrone's builtin set exactly.
+const ID_BY_NAME: Record<string, string> = {
+  "Equal (12-TET)": "equal",
+  "Just 5-limit": "just5",
+  "¼-comma Meantone": "meantone",
+  "Harmonic Series": "harmonics",
+  "Maqam Rast": "maqam-rast",
+  Slendro: "slendro",
 };
+
+export const BUILTIN_TUNINGS: Record<string, BuiltinTuning> = Object.fromEntries(
+  BUILTIN_PORTABLE_TUNINGS.filter((t) => ID_BY_NAME[t.name]).map((t) => {
+    const id = ID_BY_NAME[t.name];
+    // Legacy 13-slot form: sounding degrees followed by the repeat period.
+    return [id, { id, label: t.name, degrees: [...t.scaleCents, periodCents(t)] }];
+  }),
+);
 
 // Returns 13 degrees [0..1200]; callers must drop the final octave when
 // building a PortableTuning.scaleCents (length 12).

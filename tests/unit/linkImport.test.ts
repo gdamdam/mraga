@@ -28,6 +28,41 @@ describe("sceneToTuning", () => {
     expect(t.label).toContain("Foo");
   });
 
+  it("imports a non-12 custom tuning at full length (no slice(0,12) truncation)", () => {
+    // 19 sounding degrees (19-EDO) + a trailing 1200¢ period = 20 entries.
+    const degrees = [
+      0, 63.16, 126.32, 189.47, 252.63, 315.79, 378.95, 442.11, 505.26, 568.42,
+      631.58, 694.74, 757.89, 821.05, 884.21, 947.37, 1010.53, 1073.68, 1136.84, 1200,
+    ];
+    const t = sceneToTuning({
+      drone: { root: "C", octave: 4, tuningId: "custom:19edo" },
+      customTuning: { id: "custom:19edo", label: "19-EDO", degrees },
+    });
+    // Full scale survives: 19 degrees, not silently truncated to 12.
+    expect(t.scaleCents).toHaveLength(19);
+    expect(t.scaleCents).toEqual(degrees.slice(0, -1));
+    expect(t.scaleCents[18]).toBeCloseTo(1136.84, 2);
+    expect(t.label).toContain("19-EDO");
+  });
+
+  it("plays a non-12 tuning carried by an mdrone share link (round-trip)", async () => {
+    const degrees = [
+      0, 70.6, 211.8, 282.4, 352.9, 494.1, 564.7, 705.9, 776.5, 917.6,
+      988.2, 1129.4, 1200, 1270.6, 1341.2, 1411.8, 1482.4, 1200 + 352.9,
+    ]; // >12 sounding degrees + period
+    const scene = {
+      version: 1,
+      name: "x",
+      drone: { root: "C", octave: 4, tuningId: "custom:17" },
+      customTuning: { id: "custom:17", label: "17-TET wide", degrees },
+    };
+    const { key, value } = await encodeScene(scene);
+    const url = `https://app.mdrone.org/?${key}=${encodeURIComponent(value)}`;
+    const t = await importTuningFromUrl(url);
+    expect(t.scaleCents).toHaveLength(degrees.length - 1);
+    expect(t.scaleCents.length).toBeGreaterThan(12);
+  });
+
   it("falls back to DEFAULT_TUNING for an unparseable scene", () => {
     expect(sceneToTuning(null)).toEqual(DEFAULT_TUNING);
     expect(sceneToTuning({ drone: { root: "ZZ", octave: 99 } })).toEqual(
