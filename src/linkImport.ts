@@ -6,16 +6,37 @@ export type PortableTuning = {
   tonicHz: number;
   scaleCents: number[]; // arbitrary length N, [0] === 0 (was hard-coded to 12)
   label: string;
+  // Repeat period in cents (§2-A). Preserved from the mdrone link so
+  // non-octave scales resolve at their real period instead of silently being
+  // re-stacked at 1200. mraga still MAPS on its octave lattice (the engine is
+  // period-agnostic), so a non-octave tuning is labelled accordingly.
+  period?: number;
 };
 
 const PITCH_CLASSES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 
-// A degrees array is the legacy [scaleCents…, period] form; the sounding scale
-// is everything up to (but not including) the trailing repeat period. This
-// preserves the full scale for tunings of ANY length N — previously the scale
-// was truncated to 12 via `slice(0, 12)`, silently dropping extra degrees.
+const OCTAVE_CENTS = 1200;
+
+// A degrees array is the legacy [scaleCents…, period] form. The trailing entry
+// is the repeat period. For an OCTAVE scale (period ≈ 1200) that entry is
+// redundant — the octave lattice already reproduces it one register up — so we
+// drop it. For a NON-OCTAVE scale the trailing period is a distinct pitch the
+// octave lattice never reaches, so we keep it as a sounding degree rather than
+// silently discarding a real note (§2-A). Either way the full scale survives
+// for tunings of ANY length N (previously truncated to 12 via `slice(0, 12)`).
 function soundingDegrees(degrees: number[]): number[] {
-  return degrees.slice(0, Math.max(0, degrees.length - 1));
+  if (degrees.length === 0) return [];
+  const period = degrees[degrees.length - 1];
+  if (Math.abs(period - OCTAVE_CENTS) <= 1e-6) {
+    return degrees.slice(0, degrees.length - 1);
+  }
+  return degrees.slice();
+}
+
+// The repeat period declared by a legacy [scaleCents…, period] degrees array:
+// its trailing entry, or the octave when the array is degenerate.
+function periodOf(degrees: number[]): number {
+  return degrees.length > 0 ? degrees[degrees.length - 1] : OCTAVE_CENTS;
 }
 
 // ../mdrone/src/scene/droneSceneModel.ts:42–46
@@ -29,6 +50,7 @@ export const DEFAULT_TUNING: PortableTuning = Object.freeze({
   tonicHz: pitchToFreq("C", 4),
   scaleCents: soundingDegrees(getBuiltinDegrees("equal")),
   label: "C · Equal (12-TET)",
+  period: OCTAVE_CENTS,
 });
 
 // Accept a [scaleCents…, period] array of ANY length N (≥ 2: at least one
@@ -67,7 +89,15 @@ export function sceneToTuning(scene: unknown): PortableTuning {
       tuningLabel = s?.drone?.tuningId ?? "Equal (12-TET)";
     }
 
-    return { tonicHz, scaleCents: soundingDegrees(degrees), label: `${root} · ${tuningLabel}` };
+    const period = periodOf(degrees);
+    // §2-A: surface that a non-octave tuning is being played on mraga's
+    // octave lattice, rather than silently coercing it to 1200.
+    const nonOctave = Math.abs(period - OCTAVE_CENTS) > 1e-6;
+    const label = nonOctave
+      ? `${root} · ${tuningLabel} (non-octave: octave mapping)`
+      : `${root} · ${tuningLabel}`;
+
+    return { tonicHz, scaleCents: soundingDegrees(degrees), label, period };
   } catch {
     return DEFAULT_TUNING;
   }

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { importTuningFromUrl, sceneToTuning, DEFAULT_TUNING } from "../../src/linkImport";
 import { encodeScene } from "../../src/shareCodec";
+import { degreeToHz } from "../../src/tuning";
 
 describe("sceneToTuning", () => {
   it("computes tonicHz from root + octave (A4=440)", () => {
@@ -45,11 +46,13 @@ describe("sceneToTuning", () => {
     expect(t.label).toContain("19-EDO");
   });
 
-  it("plays a non-12 tuning carried by an mdrone share link (round-trip)", async () => {
+  it("plays a non-12 OCTAVE tuning carried by an mdrone share link (round-trip)", async () => {
+    // 17 sounding degrees spanning >1 octave, closed by a redundant 1200
+    // period. The octave lattice reproduces the 1200, so it is dropped.
     const degrees = [
-      0, 70.6, 211.8, 282.4, 352.9, 494.1, 564.7, 705.9, 776.5, 917.6,
-      988.2, 1129.4, 1200, 1270.6, 1341.2, 1411.8, 1482.4, 1200 + 352.9,
-    ]; // >12 sounding degrees + period
+      0, 70.6, 141.2, 211.8, 282.4, 352.9, 423.5, 494.1, 564.7, 635.3,
+      705.9, 776.5, 847.1, 917.6, 988.2, 1058.8, 1129.4, 1200,
+    ];
     const scene = {
       version: 1,
       name: "x",
@@ -59,8 +62,48 @@ describe("sceneToTuning", () => {
     const { key, value } = await encodeScene(scene);
     const url = `https://app.mdrone.org/?${key}=${encodeURIComponent(value)}`;
     const t = await importTuningFromUrl(url);
-    expect(t.scaleCents).toHaveLength(degrees.length - 1);
+    expect(t.scaleCents).toHaveLength(degrees.length - 1); // trailing 1200 dropped
     expect(t.scaleCents.length).toBeGreaterThan(12);
+    expect(t.period).toBe(1200);
+    expect(t.label).not.toContain("non-octave");
+  });
+
+  it("preserves a NON-OCTAVE period (Bohlen-Pierce) and labels the octave mapping (§2-A)", () => {
+    // Bohlen-Pierce repeats at the tritave 3/1 = 1901.955¢. mdrone's legacy
+    // degrees array carries the period as its trailing entry.
+    const tritave = 1901.955;
+    const degrees = [
+      0, 133.238, 301.847, 435.084, 546.815, 736.931, 848.663,
+      1017.272, 1150.510, 1319.119, 1466.871, 1600.108, tritave,
+    ];
+    const t = sceneToTuning({
+      drone: { root: "A", octave: 4, tuningId: "custom:bp" },
+      customTuning: { id: "custom:bp", label: "Bohlen-Pierce", degrees },
+    });
+    // Period preserved, NOT coerced to 1200; the trailing tritave is a real
+    // pitch the octave lattice never reaches, so it is kept as a sounding degree.
+    expect(t.period).toBeCloseTo(tritave, 3);
+    expect(t.scaleCents).toEqual(degrees);
+    expect(t.scaleCents[0]).toBe(0);
+    // §2-A: the non-octave nature is surfaced, not silently mapped.
+    expect(t.label).toContain("non-octave: octave mapping");
+  });
+
+  it("resolves a non-octave register at its real period, not re-stacked at 1200 (§1)", () => {
+    const tritave = 1901.955;
+    const degrees = [0, 133.238, 301.847, 435.084, 546.815, 736.931, tritave];
+    const t = sceneToTuning({
+      drone: { root: "A", octave: 4, tuningId: "custom:bp" },
+      customTuning: { id: "custom:bp", label: "BP", degrees },
+    });
+    // Resolving degree 0 one register up uses the real tritave period when the
+    // period-aware resolver is given `t.period` — the drone stays beat-locked
+    // to 3/1, not a 2/1 octave.
+    const withPeriod = degreeToHz(t.scaleCents, t.tonicHz, 0, 1, t.period);
+    const reStacked = degreeToHz(t.scaleCents, t.tonicHz, 0, 1); // legacy octave path
+    expect(withPeriod).toBeCloseTo(t.tonicHz * Math.pow(2, tritave / 1200), 4);
+    expect(reStacked).toBeCloseTo(t.tonicHz * 2, 4);
+    expect(withPeriod).not.toBeCloseTo(reStacked, 1);
   });
 
   it("falls back to DEFAULT_TUNING for an unparseable scene", () => {

@@ -4,7 +4,7 @@
   <a href="https://github.com/gdamdam/mraga"><img src="https://img.shields.io/github/package-json/v/gdamdam/mraga?color=blue&label=version" alt="Version"></a>
   <a href="https://github.com/gdamdam/mraga/actions/workflows/deploy.yml"><img src="https://github.com/gdamdam/mraga/actions/workflows/deploy.yml/badge.svg" alt="Deploy"></a>
   <a href="https://github.com/gdamdam/mraga/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License"></a>
-  <img src="https://img.shields.io/badge/tests-184%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-189%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/Web%20Audio-API-FF6600" alt="Web Audio API">
   <img src="https://img.shields.io/badge/AudioWorklet-DSP-FF6600" alt="AudioWorklet">
 </p>
@@ -164,7 +164,7 @@ Note: the service-worker cache version is derived from `package.json` at build t
 A core of **pure, seeded, audio-free units** (exhaustively unit-tested) wrapped by a thin Web Audio layer and React UI:
 
 - `engine` — the generative brain (directed contours + motif repetition + steady pulse). Pure, deterministic, the most thoroughly tested unit.
-- `tuning`, `linkImport`, `shareCodec`, `builtinTunings` — decode an mdrone link → tonic + scale; pitch-lattice math and resting-note detection. The resolver + builtin library are the shared tuning core vendored from mdrone (`vendor/tuning-core/`); `linkImport` supports scales of arbitrary length N.
+- `tuning`, `linkImport`, `shareCodec`, `builtinTunings` — decode an mdrone link → tonic + scale; pitch-lattice math and resting-note detection. The resolver + builtin library are the shared tuning core vendored from mdrone (`vendor/tuning-core/`); `linkImport` supports scales of arbitrary length N. Non-octave tunings import from mdrone links with their real repeat period preserved (e.g. Bohlen-Pierce); mraga maps them on its octave lattice and labels them "(non-octave: octave mapping)".
 - `conducting` — maps the seven knobs to engine parameters.
 - `voicePresets` + the Karplus–Strong `voice` worklet — one parameterized struck-string voice with a small voice pool and a reverb send.
 - `scheduler` — a Web Audio lookahead scheduler with optional onset quantization (bpm / Link).

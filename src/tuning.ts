@@ -15,9 +15,15 @@ export function degreeToHz(
   tonicHz: number,
   degreeIndex: number,
   octave: number,
+  period?: number,
 ): number {
-  // Octave period defaults to 1200¢ in the core, matching the prior behavior.
-  return resolveDegreeToHz({ tonicHz, scaleCents, name: "" }, degreeIndex, octave);
+  // §1/§2-A: thread the tuning's repeat period into the shared core so a
+  // non-octave scale (period ≠ 1200) resolves at its real period instead of
+  // being re-stacked at the octave. The param is optional and trailing, so
+  // existing 4-arg callers (engine.ts / scheduler.ts / gamaka.ts) are
+  // unchanged and keep mapping on the 1200¢ octave lattice — the core defaults
+  // `period` to 1200 when it's undefined.
+  return resolveDegreeToHz({ tonicHz, scaleCents, period, name: "" }, degreeIndex, octave);
 }
 
 export function degreeToStepPos(degreeIndex: number, octave: number, scaleLen: number): number {

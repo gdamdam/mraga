@@ -207,6 +207,32 @@ describe("sanitization", () => {
     expect(decodeScene(encodeRaw(raw))).toBeNull();
   });
 
+  it("rejects a non-ascending scaleCents payload → null (crafted ?s= link)", () => {
+    const raw = {
+      ...SAMPLE_SCENE,
+      tuning: { ...SAMPLE_SCENE.tuning, scaleCents: [0, 386, 204, 498, 702] },
+    };
+    expect(decodeScene(encodeRaw(raw))).toBeNull();
+  });
+
+  it("rejects scaleCents not rooted at 0 → null", () => {
+    const raw = {
+      ...SAMPLE_SCENE,
+      tuning: { ...SAMPLE_SCENE.tuning, scaleCents: [50, 204, 386, 498, 702] },
+    };
+    expect(decodeScene(encodeRaw(raw))).toBeNull();
+  });
+
+  it("preserves a non-octave period through the scene round-trip (§2-A)", () => {
+    const raw = {
+      ...SAMPLE_SCENE,
+      tuning: { ...SAMPLE_SCENE.tuning, scaleCents: [0, 133.24, 301.85, 435.08], period: 1901.955 },
+    };
+    const decoded = decodeScene(encodeRaw(raw));
+    expect(decoded).not.toBeNull();
+    expect(decoded!.tuning.period).toBeCloseTo(1901.955, 3);
+  });
+
   it("older payloads without raga/drone decode with defaults", () => {
     const { raga: _r, drone: _d, droneLevel: _l, ...old } = SAMPLE_SCENE;
     const decoded = decodeScene(encodeRaw(old));

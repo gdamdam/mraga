@@ -17,7 +17,7 @@ export type MragaScene = {
   bpm: number;     // 40..240
   theme: string;   // ThemeId
   seed: number;    // PRNG seed (reproducible improvisation)
-  tuning: { tonicHz: number; scaleCents: number[]; label: string };
+  tuning: { tonicHz: number; scaleCents: number[]; label: string; period?: number };
   // Added in 0.2 — decoded with defaults so older shared scenes stay valid.
   raga: string;       // raga id, or "" for free (no grammar)
   drone: boolean;     // built-in tanpura on/off
@@ -70,7 +70,7 @@ function validateKnobs(
 
 function validateTuning(
   tuning: unknown,
-): { tonicHz: number; scaleCents: number[]; label: string } | null {
+): { tonicHz: number; scaleCents: number[]; label: string; period?: number } | null {
   if (!tuning || typeof tuning !== "object") return null;
   const t = tuning as Record<string, unknown>;
   // tonicHz must be a plausible audio frequency (an absurd value would push
@@ -83,10 +83,24 @@ function validateTuning(
   // crash at play); [].every() is vacuously true, so check length explicitly.
   if (scaleCents.length < 1 || scaleCents.length > 24) return null;
   if (!scaleCents.every(isFiniteNumber)) return null;
+  // Mirror the shared core's isValidTuning: the scale must be rooted at 0 and
+  // strictly ascending. A crafted ?s= link with unsorted or unrooted cents
+  // would otherwise be accepted and produce a garbled (or divide-degenerate)
+  // lattice; reject it so decodeScene falls back to DEFAULT_TUNING.
+  if ((scaleCents as number[])[0] !== 0) return null;
+  for (let i = 1; i < scaleCents.length; i++) {
+    if ((scaleCents as number[])[i] <= (scaleCents as number[])[i - 1]) return null;
+  }
+  // Repeat period (§2-A) travels with the scene when present so a non-octave
+  // tuning imported from an mdrone link survives a mraga re-share. Optional and
+  // positive; absent/invalid → undefined (the resolver then defaults to 1200).
+  const period =
+    isFiniteNumber(t.period) && (t.period as number) > 0 ? (t.period as number) : undefined;
   return {
     tonicHz: t.tonicHz as number,
     scaleCents: scaleCents as number[],
     label: t.label,
+    ...(period !== undefined ? { period } : {}),
   };
 }
 
