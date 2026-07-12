@@ -112,6 +112,35 @@ describe("phrases breathe", () => {
   });
 });
 
+describe("taal phraseStart bias pulls phrase launches", () => {
+  it("high phraseStart bias launches phrases more often when a launch is pending", () => {
+    const base = knobsToParams({ density: 0.5, register: 0.5, restlessness: 0.5, silence: 0.5 }, tonicHz);
+    // Isolate phraseStart (all other bias weights neutral) and measure the
+    // fraction of launch-pending events that actually start a phrase (a note)
+    // instead of breathing (a rest).
+    const launchRate = (phraseStart: number) => {
+      const p = { ...base, taalBias: { accent: 1, phraseStart, resolution: 1, rest: 1 } };
+      const rng = makeRng(42);
+      let state = initState();
+      let pending = 0, launched = 0;
+      for (let i = 0; i < 1500; i++) {
+        const launchPending =
+          state.pending.length === 0 &&
+          (state.pendingPhraseEnd || state.phraseIdx >= state.phrase.length);
+        const r = nextEvent(state, scale, tonicHz, p, rng);
+        if (launchPending) {
+          pending++;
+          if (r.event.kind === "note") launched++;
+        }
+        state = r.state;
+      }
+      expect(pending).toBeGreaterThan(20);
+      return launched / pending;
+    };
+    expect(launchRate(2)).toBeGreaterThan(launchRate(1));
+  });
+});
+
 describe("phrases resolve onto resting notes", () => {
   it("the note before a phrase-end rest is usually a resting degree", () => {
     const p = knobsToParams({ density: 0.7, register: 0.5, restlessness: 0.3, silence: 0.5 }, tonicHz);

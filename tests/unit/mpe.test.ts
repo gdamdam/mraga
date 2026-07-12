@@ -86,6 +86,31 @@ describe("MPE voice stealing", () => {
   });
 });
 
+describe("MPE stale scheduled bend on stolen channel", () => {
+  it("no future center-bend from a stolen voice lands during the new note", () => {
+    const mgr = new MidiVoiceManager("mpe");
+    const all: { bytes: number[]; atMs?: number }[] = [];
+    // Fill every channel with long notes (release at 10s, bend reset would be ~10s+1ms).
+    for (let i = 0; i < MPE_CHANNELS.length; i++) {
+      all.push(...mgr.noteOn(A4, 0.8, 10_000, 0).messages);
+    }
+    // Steal at t=1000 with a note ringing until t=11000: the stolen voice's
+    // scheduled center-bend (~10001ms) must not fire mid-note and detune it.
+    const stealer = mgr.noteOn(A4, 0.8, 10_000, 1000);
+    all.push(...stealer.messages);
+    const stale = all.filter(
+      (m) =>
+        isBend(m) &&
+        chanOf(m) === stealer.channel &&
+        m.atMs !== undefined &&
+        m.atMs > 1000 &&
+        m.atMs < 11_000 &&
+        (m.bytes[1] | (m.bytes[2] << 7)) === 8192,
+    );
+    expect(stale).toHaveLength(0);
+  });
+});
+
 describe("ownership + explicit release", () => {
   it("noteOff by id releases the channel and resets bend in MPE", () => {
     const mgr = new MidiVoiceManager("mpe");

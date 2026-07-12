@@ -293,6 +293,7 @@ export function nextEvent(
   const tRest = Math.max(0, Math.min(2, params.taalBias?.rest ?? 1));
   const tAccent = Math.max(0, Math.min(1.6, params.taalBias?.accent ?? 1));
   const tResolution = Math.max(0.5, Math.min(3, params.taalBias?.resolution ?? 1));
+  const tPhraseStart = Math.max(0.5, Math.min(2, params.taalBias?.phraseStart ?? 1));
   const restingBase = restingNotes(scaleCents);
   // Vadi/samvadi boost: the raga's emphasized degrees behave as strong
   // resting notes (resolution targets, longer dwell, slight accent).
@@ -307,7 +308,12 @@ export function nextEvent(
   //    rests on top. (Not every phrase breathes — phrases also flow together.)
   const phraseBreath = state.pendingPhraseEnd;
   // Taal biases rests toward khali and away from sam (tRest scales rest odds).
-  if ((phraseBreath && rng() < 0.6 * tRest) || rng() < params.pRest * tRest) {
+  // When a fresh phrase would launch this event, phraseStart pulls launches
+  // toward sam/tali by damping the breath that would delay them (a bias, not
+  // a hard gate — resting there stays possible).
+  const launchPending = phraseBreath || state.phraseIdx >= state.phrase.length;
+  const restBias = launchPending ? tRest / tPhraseStart : tRest;
+  if ((phraseBreath && rng() < 0.6 * restBias) || rng() < params.pRest * restBias) {
     const phraseEnd = phraseBreath || rng() < 0.3;
     const ioi = sampleIoi(params, rng, phraseEnd ? params.phrasePauseFactor : 1);
     if (phraseEnd) next.pendingPhraseEnd = false;

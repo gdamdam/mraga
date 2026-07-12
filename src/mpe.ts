@@ -65,7 +65,7 @@ export class MidiVoiceManager {
   }
 
   // Free any voice whose scheduled note-off has already fired by nowMs. Its
-  // note-off + bend-reset were emitted at note-on time, so reaping is state-only.
+  // note-off was emitted at note-on time, so reaping is state-only.
   private reap(nowMs: number): void {
     this.voices = this.voices.filter((v) => v.releaseAtMs > nowMs);
   }
@@ -118,13 +118,12 @@ export class MidiVoiceManager {
     // Bend BEFORE note-on so the note starts in tune (esp. important for MPE).
     messages.push({ bytes: bendMsg(channel, bend) });
     messages.push({ bytes: noteOnMsg(channel, note, vel) });
-    // Scheduled note-off; reset bend to centre just after so a reused channel
-    // starts neutral. In single-channel mode we do NOT reset the bend (that
-    // would retune notes still ringing on the shared channel).
+    // Scheduled note-off frees the channel. We deliberately do NOT schedule a
+    // future bend-reset: WebMIDI's timestamp queue is fire-and-forget, so a
+    // queued reset can't be cancelled when the channel is stolen — it would
+    // fire mid-note and detune the stealing note. A stale bend on an idle
+    // channel is harmless because every note-on bends its channel first.
     messages.push({ bytes: noteOffMsg(channel, note), atMs: releaseAtMs });
-    if (this.mode === "mpe") {
-      messages.push({ bytes: bendMsg(channel, BEND_CENTER), atMs: releaseAtMs + 1 });
-    }
 
     const id = this.nextId++;
     this.voices.push({ id, channel, note, releaseAtMs, order: this.orderCounter++ });
