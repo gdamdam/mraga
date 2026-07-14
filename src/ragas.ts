@@ -20,6 +20,10 @@ export type Raga = {
   label: string;
   aroha: number[]; // degree indices allowed ascending
   avaroha: number[]; // degree indices allowed descending
+  // Optional authored crooked (vakra) descent order — the successor degree the
+  // line prefers while descending, encoding non-monotonic turns (e.g. Desh's
+  // P→D return). Absent ⇒ the avaroha set descends monotonically as before.
+  avarohaPath?: number[];
   vadi: number; // most emphasized degree (strongest authored resting note)
   samvadi: number; // second-most emphasized degree
   pakad: number[]; // signature phrase, lattice steps relative to Sa
@@ -27,6 +31,7 @@ export type Raga = {
   time?: string; // rough time/season association (not a rigid claim)
   weak?: number[]; // durbal/avoid degrees — used sparingly, trimmed first
   ornaments?: GamakaRules; // authored gamaka grammar (see gamaka.ts)
+  tanpuraString?: number; // degree the drone's variable string tunes to (Pa/Ma/Ni)
 };
 
 export const RAGAS: Record<string, Raga> = {
@@ -81,6 +86,8 @@ export const RAGAS: Record<string, Raga> = {
     label: "Desh",
     aroha: [0, 2, 5, 7, 11],
     avaroha: [0, 2, 4, 5, 7, 9, 10],
+    // Crooked descent S' n D P D m G R S — the P→D return is Desh's signature.
+    avarohaPath: [0, 10, 9, 7, 9, 5, 4, 2, 0],
     vadi: 2,
     samvadi: 7,
     pakad: [2, 5, 7, 11, 12], // R m P N S'
@@ -89,6 +96,9 @@ export const RAGAS: Record<string, Raga> = {
     ornaments: {
       meend: { degrees: [2, 11], prob: 0.3 },
       kan: { degrees: [2, 7], prob: 0.2 },
+      // A quick murki turn on Ga/Dha (flanking vadi Re & samvadi Pa) — Desh's
+      // characteristic playful flick. Degrees kept off kan/meend so it fires.
+      murki: { degrees: [4, 9], prob: 0.15 },
     },
   },
   malkauns: {
@@ -101,6 +111,7 @@ export const RAGAS: Record<string, Raga> = {
     pakad: [5, 3, 5, 8, 10, 8, 5], // m g m d n d m
     mood: "deep midnight pentatonic",
     time: "late night",
+    tanpuraString: 5, // ma — Malkauns has no Pa, so the drone tunes to Ma
     ornaments: {
       meend: { degrees: [3, 8, 10], prob: 0.32 },
       andolan: { degrees: [3], cents: 16, prob: 0.2 },
@@ -156,6 +167,8 @@ export const RAGAS: Record<string, Raga> = {
     label: "Khamaj",
     aroha: [0, 4, 5, 7, 9, 11],
     avaroha: [0, 2, 4, 5, 7, 9, 10],
+    // Crooked descent n D P D m G R S — mirrors the pakad's D-return turn.
+    avarohaPath: [0, 10, 9, 7, 9, 5, 4, 2, 0],
     vadi: 4,
     samvadi: 11,
     pakad: [7, 9, 10, 9, 5, 4], // P D n D m G
@@ -165,6 +178,9 @@ export const RAGAS: Record<string, Raga> = {
     ornaments: {
       meend: { degrees: [4, 10], prob: 0.3 },
       kan: { degrees: [4, 7], prob: 0.2 },
+      // Light murki on Ma/Dha (flanking vadi Ga & samvadi Ni) — Khamaj's
+      // flirtatious turn. Degrees kept off kan/meend so it actually fires.
+      murki: { degrees: [5, 9], prob: 0.15 },
     },
   },
   todi: {
@@ -193,6 +209,7 @@ export const RAGAS: Record<string, Raga> = {
     mood: "unsettled dusk, no Pa, komal Re",
     time: "sunset",
     weak: [0], // Sa is deliberately sparse in Marwa
+    tanpuraString: 11, // Ni — Marwa avoids Pa, so the drone tunes to shuddha Ni
     ornaments: {
       meend: { degrees: [1, 9], prob: 0.32 },
       andolan: { degrees: [1], cents: 18, prob: 0.22 },

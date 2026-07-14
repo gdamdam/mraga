@@ -33,6 +33,24 @@ const POINTS: ArcPoint[] = [
 
 const lerp = (a: number, b: number, x: number) => a + (b - a) * x;
 
+// Register ceiling: alap opens low and slowly reveals the upper register (the
+// classic exposition that starts near the tonic and unfolds upward). The upper
+// bound starts ~a fifth above center and widens to the full configured half-span
+// by the time jor begins, then stays fully open. A perfect fifth is ~0.585 of an
+// octave, so ~0.6 of the half-span reads musically as "a fifth up".
+const ALAP_CEILING_FRAC = 0.6;
+
+// Upper register bound at progress t (clamped 0..1), as a step offset above
+// center — what the engine adds to centerStep for `hi`. Returns halfSpanSteps
+// (a no-op clamp) at/after jor. Pure: linear in t, no rng/time/random. Values
+// >= halfSpanSteps mean "don't clamp"; on very small spans it starts fully open.
+export function arcCeilingStep(t: number, halfSpanSteps: number): number {
+  const x = Math.max(0, Math.min(1, t));
+  const start = Math.min(ALAP_CEILING_FRAC * halfSpanSteps, halfSpanSteps);
+  const f = Math.min(1, x / JOR_AT); // fully open by the time jor begins
+  return Math.floor(lerp(start, halfSpanSteps, f));
+}
+
 // Knob overrides at progress t (clamped to 0..1), piecewise-linear between
 // the control points. DENSITY/RHYTHM/SILENCE/REGISTER/RESTLESS are driven;
 // THEME/FOCUS stay the user's.

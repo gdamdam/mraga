@@ -63,6 +63,29 @@ describe("gamaka in the engine — enabled", () => {
   });
 });
 
+describe("andolan tail micro-notes carry noPluck", () => {
+  // Andolan on Sa (degree 0, a strong resting note) so the waver fires when the
+  // line resolves home. Its tail notes are a continuous bend, not a re-attack.
+  const rules: GamakaRules = { andolan: { degrees: [0], cents: 20, prob: 1 } };
+  const params: EngineParams = { ...base, gamaka: rules, gamakaEnabled: true };
+
+  it("flags waver notes, and never flags a note that isn't part of the waver", () => {
+    const ns = notes(run(params, 4, 400));
+    const flagged = ns.filter((n) => n.noPluck);
+    expect(flagged.length).toBeGreaterThan(0);
+    // Every flagged note is a real waver micro-note (it glides off another pitch).
+    for (const n of flagged) {
+      expect(n.noPluck).toBe(true);
+      expect(n.glideFromHz).not.toBeUndefined();
+    }
+  });
+
+  it("disabled gamaka never sets noPluck", () => {
+    const off = notes(run({ ...base, gamaka: rules, gamakaEnabled: false }, 4, 400));
+    expect(off.some((n) => n.noPluck)).toBe(false);
+  });
+});
+
 describe("taal bias in the engine", () => {
   it("a rest-heavy bias (khali) yields more rests than a rest-suppressing bias (sam)", () => {
     const khali: TaalBias = { accent: 0.8, phraseStart: 0.7, resolution: 0.7, rest: 1.6 };

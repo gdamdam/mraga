@@ -28,6 +28,10 @@ const SAMPLE_SCENE: MragaScene = {
   droneLevel: 0.6,
   taal: "teental",
   gamaka: true,
+  rhythmCells: true,
+  tihai: true,
+  vakra: true,
+  theka: true,
 };
 
 // ---------------------------------------------------------------------------
@@ -41,6 +45,16 @@ describe("backward compatibility", () => {
     expect(decoded).not.toBeNull();
     expect(decoded!.taal).toBe("off");
     expect(decoded!.gamaka).toBe(false);
+  });
+
+  it("a pre-0.4 scene (no phrase-engine flags / theka) decodes them to false", () => {
+    const { rhythmCells: _r, tihai: _ti, vakra: _v, theka: _th, ...pre04 } = SAMPLE_SCENE;
+    const decoded = decodeScene(bytesToUrlSafeB64(new TextEncoder().encode(JSON.stringify(pre04))));
+    expect(decoded).not.toBeNull();
+    expect(decoded!.rhythmCells).toBe(false);
+    expect(decoded!.tihai).toBe(false);
+    expect(decoded!.vakra).toBe(false);
+    expect(decoded!.theka).toBe(false);
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { arcKnobs, arcPhaseAt, ARC_DURATIONS_MIN } from "../../src/arc";
+import { arcKnobs, arcPhaseAt, arcCeilingStep, ARC_DURATIONS_MIN } from "../../src/arc";
 
 describe("performance arc", () => {
   it("phases: alap → jor → jhala", () => {
@@ -45,5 +45,52 @@ describe("performance arc", () => {
 
   it("offers sensible durations", () => {
     expect(ARC_DURATIONS_MIN).toEqual([6, 12, 24]);
+  });
+});
+
+describe("arc register ceiling", () => {
+  const HALF = 7; // default registerHalfSpanSteps
+
+  it("alap starts ~a fifth above center (below full span)", () => {
+    const c0 = arcCeilingStep(0, HALF);
+    expect(c0).toBeGreaterThan(0);
+    expect(c0).toBeLessThan(HALF); // register is not yet fully open
+    // ~0.6 of the half-span ("a fifth up")
+    expect(c0).toBe(Math.floor(0.6 * HALF));
+  });
+
+  it("opens to the full span by the jor phase and stays open", () => {
+    expect(arcCeilingStep(0.42, HALF)).toBe(HALF); // JOR_AT
+    expect(arcCeilingStep(0.6, HALF)).toBe(HALF);
+    expect(arcCeilingStep(1, HALF)).toBe(HALF);
+  });
+
+  it("is monotonic non-decreasing across the arc", () => {
+    let prev = -1;
+    for (let t = 0; t <= 1.001; t += 0.02) {
+      const c = arcCeilingStep(t, HALF);
+      expect(c).toBeGreaterThanOrEqual(prev);
+      prev = c;
+    }
+  });
+
+  it("clamps t outside 0..1", () => {
+    expect(arcCeilingStep(-1, HALF)).toBe(arcCeilingStep(0, HALF));
+    expect(arcCeilingStep(2, HALF)).toBe(arcCeilingStep(1, HALF));
+  });
+
+  it("no-op semantics: never exceeds the half-span (>= means don't clamp)", () => {
+    for (let t = 0; t <= 1.001; t += 0.05) {
+      expect(arcCeilingStep(t, HALF)).toBeLessThanOrEqual(HALF);
+    }
+    // At/after jor the offset equals the half-span, so the engine clamp is a no-op.
+    expect(arcCeilingStep(1, HALF)).toBe(HALF);
+  });
+
+  it("small spans still open up to the full span by jor", () => {
+    // A 1-step half-span: starts restricted (0) and opens to the full span.
+    expect(arcCeilingStep(0, 1)).toBeLessThanOrEqual(1);
+    expect(arcCeilingStep(0.42, 1)).toBe(1);
+    expect(arcCeilingStep(1, 1)).toBe(1);
   });
 });

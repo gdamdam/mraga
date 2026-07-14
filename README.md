@@ -22,10 +22,10 @@
 - **Plays over the drone** — paste an mdrone share link; mraga reads the tonic and the microtonal scale out of it and improvises a struck/ringing line in that exact tuning, so the two never beat against each other.
 - **You conduct, you don't play** — seven knobs shape *how* an autonomous improviser moves: how often it speaks, where it sits, how far it wanders, how much it breathes, how tight the pulse is, how strongly it repeats a motif, and how wide a note palette it draws from.
 - **Sounds intentional, not random** — a scale-aware engine builds directed phrase contours that resolve onto consonant "resting" notes, repeats and transposes motifs, and breathes between phrases — over a steady pulse, with subtle glides.
-- **Six struck voices** — santoor, koto, sitar, mallet, qanun, kalimba — one parameterized Karplus–Strong string, switchable live.
+- **Six struck voices** — santoor, koto, sitar, mallet, qanun, kalimba — a parameterized Karplus–Strong string deepened with detuned multi-string *courses*, a pick-position comb, body/gourd resonance, sympathetic *taraf* strings tuned to the raga, and velocity→brightness — switchable live.
 - **Locks to tempo** — free/ametric by default, or snap note onsets to an internal BPM grid, or to **Ableton Link** via the shared m-family bridge.
 - **Speaks MIDI** — send the line to an external synth/DAW, microtonal via per-note pitch-bend, in Single-Channel or **MPE** mode (channels 2–8, per-note bend).
-- **Speaks raga** — ~12 authored ragas (aroha/avaroha, vadi/samvadi, pakad, weak-note behaviour, time association) with seeded **gamaka** ornaments (meend, andolan, kan, murki) and an optional **taal** cycle (teental/jhaptal/rupak/ektaal) that biases phrasing toward sam.
+- **Speaks raga** — ~12 authored ragas (aroha/avaroha, vadi/samvadi, pakad, weak-note behaviour, time association) with seeded **gamaka** ornaments (meend, andolan, kan, murki), **vakra** (crooked) descent paths, an optional **taal** cycle (teental/jhaptal/rupak/ektaal) with per-phrase **rhythm cells**, a cadential **tihai** that lands on sam, a soft **theka** metric tick, alap **badhat** (register that opens as the performance unfolds), and a raga-aware **tanpura** (Malkauns tunes its drone string to Ma, Marwa avoids Pa).
 - **Saves, shares, rerolls** — name and recall sounds locally, copy a link that restores the exact sound (including the seed), and reroll the improvisation with one click.
 - **Has character** — a warm, incandescent palette (five themes), a glowing block-art wordmark that flickers with the voice, and a live pitch-ladder that makes the microtuning visible.
 - **Works offline + installs** — service worker; once loaded it runs in airplane mode, and installs as a standalone PWA.
@@ -76,13 +76,22 @@ The heart of mraga is a **pure, seeded, audio-free** generative unit — determi
 - **Resting-note weighting** — degrees consonant against the drone (tonic, fifth, fourth, strong third — detected by cents proximity, not named-raga rules) attract dwell and phrase endings.
 - **Steady pulse** — note values are integer multiples of a base unit, barely humanised when RHYTHM is tight; loose toward rubato.
 - **Glide (meend)** — occasional portamento between notes, rendered as a sliding Karplus–Strong delay length.
+- **Rhythm cells** — per-phrase rhythmic figures (subdivisions and triplets, scaled by density) instead of a flat 1|2 pulse; still integer multiples of the base unit so the grid survives quantization. On by default.
+- **Vakra (crooked) motion** — melodic direction is chosen per phrase *segment* (not flickering per step), and descent follows the raga's authored zig-zag path where it has one (e.g. Desh, Khamaj). On by default.
+- **Tihai** — near sam, the last motif is replayed three times with equal gaps so the final stroke lands *exactly* on sam (integer-matra arithmetic across all four taals). Opt-in; needs a taal.
+- **Dynamics contour** — velocity arches toward each phrase's registral peak and releases the phrase-final note, with taal accents multiplicative on top. Always on; a pure remap of the existing velocity draw (no seed change).
 - **Anti-stuck guard** — caps consecutive identical pitches so a locked motif can't drone on one note.
+- **Responsive** — a sharp DENSITY turn nudges the next event forward (heard within ~a beat, not after a long rest); tapping a ladder degree truncates the current phrase so the line answers within a note or two.
+
+New musical behaviours that consume randomness (rhythm cells, tihai) sit behind seed-versioned flags whose default state draws no extra rng, so **old share links replay their exact original note sequence** while new sessions get the upgraded phrasing.
 
 ---
 
 ## Voices
 
 One parameterized Karplus–Strong string; each flavour is a parameter set over brightness (an in-loop lowpass), damping, decay, and jawari (a metallic-buzz waveshaper). Switch live; the choice is remembered and travels in the share link.
+
+The string is deepened by five lightweight stages, each a no-op when its per-voice parameter is zero (so the original timbre stays reachable): **detuned courses** (2–3 KS lines a few cents apart, as on a santoor/sitar/qanun), a **pick-position comb** on the excitation, post-sum **body resonance** (a few biquads — bright box vs gourd vs block), a quiet **taraf** bank of sympathetic strings tuned to the raga's strong degrees (retuned on raga/tuning change), and **velocity→brightness** coupling (harder strikes open the tone). CPU stays modest — biquads and a handful of extra KS lines, no FFT — so it remains a lightweight PWA.
 
 | Voice | Character |
 |---|---|
@@ -139,7 +148,9 @@ The channel allocation, bend bytes, ownership, stealing, cleanup and panic logic
 
 - **Themes** — five warm, incandescent palettes (saffron, madder, rosewood, clay, parchment) in the m-family mood, switchable live from the header and remembered.
 - **Glowing wordmark** — block-art `mraga` with an incandescent text-shadow that flickers and breathes with the voice's output level, like a struck string lighting up.
-- **One screen** — header (link field, transport, presets, share, theme), pitch ladder, the seven knobs, and a footer control strip.
+- **One screen, grouped by intent** — a prominent PERFORM zone (the seven knobs + reroll + pitch ladder) with GRAMMAR (raga, taal, theka, gamaka, rhythm cells, tihai, vakra, arc), SOUND, TIMING, and a collapsible I/O cluster (presets, share, record, MIDI) around it. A newcomer sees transport, ladder, knobs, and voice; deeper controls disclose on demand.
+- **Taal meter** — when a taal is active, a row of matra pips (grouped by vibhag, with sam/tali/khali marked) lights the current beat, so the cycle is visible even with theka off.
+- **Plays with the keyboard & the thumb** — Space toggles play/stop; touch targets are ≥40px and the layout holds on a phone (knobs wrap, ladder stays visible).
 
 ---
 
@@ -166,8 +177,9 @@ A core of **pure, seeded, audio-free units** (exhaustively unit-tested) wrapped 
 - `engine` — the generative brain (directed contours + motif repetition + steady pulse). Pure, deterministic, the most thoroughly tested unit.
 - `tuning`, `linkImport`, `shareCodec`, `builtinTunings` — decode an mdrone link → tonic + scale; pitch-lattice math and resting-note detection. The resolver + builtin library are the shared tuning core vendored from mdrone (`vendor/tuning-core/`); `linkImport` supports scales of arbitrary length N. Non-octave tunings import from mdrone links with their real repeat period preserved (e.g. Bohlen-Pierce); mraga maps them on its octave lattice and labels them "(non-octave: octave mapping)".
 - `conducting` — maps the seven knobs to engine parameters.
-- `voicePresets` + the Karplus–Strong `voice` worklet — one parameterized struck-string voice with a small voice pool and a reverb send.
-- `scheduler` — a Web Audio lookahead scheduler with optional onset quantization (bpm / Link).
+- `ragas`, `taal`, `arc`, `theka` — raga grammar (incl. vakra descent paths + raga-aware tanpura string), taal cycle math, the alap→jor→jhala performance arc (with badhat register unlock), and the pure soft-theka tick math.
+- `voicePresets` + the Karplus–Strong `voice` worklet — one parameterized struck-string voice (courses, pick comb, body resonance, taraf, velocity→brightness) with a small voice pool and a reverb send.
+- `scheduler` — a Web Audio lookahead scheduler with optional onset quantization (bpm / Link), a stateless `previewOnset` (taal bias at the true onset), and a `nudge` for knob responsiveness.
 - `linkClock`, `linkBridge` — Ableton Link tempo lock (bridge client vendored from mdrone).
 - `mragaScene`, `presets`, `midi`, `themes` — scene serialization + sharing, named presets, MIDI out, colour themes.
 

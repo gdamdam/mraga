@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { planGamaka, type GamakaContext, type GamakaRules } from "../../src/gamaka";
 import { degreeToHz } from "../../src/tuning";
 import { makeRng } from "../../src/rng";
+import { RAGAS } from "../../src/ragas";
 
 const scale = [0, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100];
 const tonicHz = 261.6256;
@@ -120,6 +121,19 @@ describe("andolan — waver on a held resting note", () => {
       expect(n.pitchHz).toBeGreaterThanOrEqual(c.pitchHz - 1e-6);
       expect(n.pitchHz).toBeLessThanOrEqual(maxHz + 1e-6);
     }
+  });
+});
+
+describe("murki — authored ragas actually fire it", () => {
+  const zero = () => 0; // < any prob, so the first applicable rule fires
+  it("Desh fires murki on Ga (degree 4) — a live path, not dead", () => {
+    const p = planGamaka(ctx({ degreeIndex: 4 }), RAGAS.desh.ornaments, true, zero);
+    expect(p.kind).toBe("murki");
+    expect(p.graces).toHaveLength(3); // upper → main → lower turn
+  });
+  it("Khamaj fires murki on Ma (degree 5)", () => {
+    const p = planGamaka(ctx({ degreeIndex: 5 }), RAGAS.khamaj.ornaments, true, zero);
+    expect(p.kind).toBe("murki");
   });
 });
 

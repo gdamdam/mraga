@@ -8,12 +8,19 @@ import { Scheduler } from "./scheduler";
 import type { Voice } from "./voice";
 import type { KSParams } from "./voicePresets";
 
-// Long, buzzing, resonant strings.
+// Long, buzzing, resonant strings. Extended timbre fields are zeroed/empty so
+// the drone keeps its established sound (the new DSP stages are no-ops here).
 export const TANPURA_PRESET: KSParams = {
   brightness: 0.55,
   damping: 0.4985,
   decay: 0.99998,
   jawari: 0.55,
+  courseDetune: 0,
+  courseCount: 1,
+  pickPos: 0,
+  velTrack: 0,
+  tarafSend: 0,
+  body: [],
 };
 
 // Seconds between plucks; a full 4-string cycle is ~4.6s (a typical unhurried
@@ -34,12 +41,22 @@ function pickNear(scaleCents: number[], target: number, tol: number): number | n
   return best;
 }
 
-// Pure: the four pluck frequencies for a tonic + scale. Uses the scale's own
-// fifth (so a microtonal fifth stays microtonal); falls back to the fourth,
-// then to the low octave, when the scale lacks one.
-export function tanpuraCycle(tonicHz: number, scaleCents: number[]): number[] {
-  const fifth = pickNear(scaleCents, 702, 40) ?? pickNear(scaleCents, 498, 40);
-  const paHz = fifth != null ? tonicHz * Math.pow(2, (fifth - 1200) / 1200) : tonicHz / 2;
+// Pure: the four pluck frequencies for a tonic + scale. The first (drone)
+// string uses the scale's own fifth (so a microtonal fifth stays microtonal),
+// falling back to the fourth, then the low octave, when the scale lacks one.
+// `preferredCents` lets a raga override that string with a specific degree —
+// e.g. Malkauns tunes it to ma, and Marwa (which drops Pa) picks a non-Pa
+// degree rather than letting the fallback reach for the fourth. Callers resolve
+// their preferred degree index to cents; the value is a degree above Sa (0c),
+// voiced an octave down like the fifth. Optional: omit it for the classic cycle.
+export function tanpuraCycle(
+  tonicHz: number,
+  scaleCents: number[],
+  preferredCents?: number,
+): number[] {
+  const stringCents =
+    preferredCents ?? pickNear(scaleCents, 702, 40) ?? pickNear(scaleCents, 498, 40);
+  const paHz = stringCents != null ? tonicHz * Math.pow(2, (stringCents - 1200) / 1200) : tonicHz / 2;
   return [paHz, tonicHz, tonicHz, tonicHz / 2];
 }
 
@@ -52,7 +69,12 @@ export class Tanpura {
   }
 
   // getTuning is read on every pluck so a tuning change retunes the drone live.
-  start(voice: Voice, getTuning: () => { tonicHz: number; scaleCents: number[] }) {
+  // preferredCents (optional) lets the active raga pin the drone string to a
+  // chosen degree; omit it and the classic fifth-cycle stands.
+  start(
+    voice: Voice,
+    getTuning: () => { tonicHz: number; scaleCents: number[]; preferredCents?: number },
+  ) {
     if (this.sched) return;
     voice.setDronePreset(TANPURA_PRESET);
     this.idx = 0;
@@ -61,7 +83,7 @@ export class Tanpura {
       lookaheadSec: 0.15,
       pull: () => {
         const t = getTuning();
-        const cycle = tanpuraCycle(t.tonicHz, t.scaleCents);
+        const cycle = tanpuraCycle(t.tonicHz, t.scaleCents, t.preferredCents);
         const pitchHz = cycle[this.idx % cycle.length];
         this.idx++;
         return {

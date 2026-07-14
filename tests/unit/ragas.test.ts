@@ -106,6 +106,25 @@ describe("ragaMasks", () => {
   });
 });
 
+describe("tanpuraString", () => {
+  it("Malkauns tunes the drone's variable string to Ma (5) — it has no Pa", () => {
+    expect(RAGAS.malkauns.tanpuraString).toBe(5);
+  });
+  it("Marwa avoids Pa, so the string is Ni (11) or omitted — never Pa (7)", () => {
+    const t = RAGAS.marwa.tanpuraString;
+    expect(t === 11 || t === undefined).toBe(true);
+    expect(t).not.toBe(7);
+  });
+  it("any tanpuraString (where present) is an in-raga degree", () => {
+    for (const id of RAGA_IDS) {
+      const r = RAGAS[id];
+      if (r.tanpuraString === undefined) continue;
+      const own = new Set([...r.aroha, ...r.avaroha]);
+      expect(own.has(r.tanpuraString)).toBe(true);
+    }
+  });
+});
+
 describe("ragaBoost", () => {
   it("boosts vadi 0.9 and samvadi 0.7, zero elsewhere", () => {
     const b = ragaBoost(RAGAS.bhairav, 12);

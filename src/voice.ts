@@ -7,7 +7,13 @@ export type Voice = {
   ctx: AudioContext;
   resume: () => Promise<void>;
   pluck: (freq: number, velocity: number, glideFromFreq?: number) => void;
+  // Andolan: glide the last-plucked voice's pitch to pitchHz over `seconds`,
+  // with no re-pluck (so a slow waver doesn't sound like repeated strikes).
+  bend: (pitchHz: number, seconds: number) => void;
   setPreset: (params: KSParams) => void;
+  // (Re)tune the sympathetic-string (taraf) bank to a set of frequencies (the
+  // raga's strong degrees). Call on raga/tuning change; [] clears the bank.
+  retuneTaraf: (freqs: number[]) => void;
   setVolume: (v: number) => void; // master output gain, 0..1
   getLevel: () => number;         // current output RMS, ~0..1 (for the logo pulse)
   // Tanpura drone: a second KS pool with its own level, sharing the space.
@@ -104,7 +110,10 @@ export async function createVoice(): Promise<Voice> {
     resume: () => ctx.resume(),
     pluck: (freq, velocity, glideFromFreq) =>
       node.port.postMessage({ type: "pluck", freq, velocity, glideFromFreq }),
+    bend: (pitchHz, seconds) =>
+      node.port.postMessage({ type: "bend", freq: pitchHz, seconds }),
     setPreset: (params) => node.port.postMessage({ type: "preset", params }),
+    retuneTaraf: (freqs) => node.port.postMessage({ type: "taraf", freqs }),
     setVolume: (v) => {
       master.gain.value = Math.max(0, Math.min(1, v));
     },

@@ -167,3 +167,49 @@ describe("phrases resolve onto resting notes", () => {
     expect(restingEndings / totalEndings).toBeGreaterThan(0.5);
   });
 });
+
+describe("arc ceilingStep clamps the upper register", () => {
+  const base = knobsToParams({ density: 0.6, register: 0.5, restlessness: 1.0, silence: 0.1 }, tonicHz);
+  const centerSp = hzToNearestStepPos(base.centerPitchHz, scale, tonicHz);
+
+  it("no note exceeds centerStep + ceilingStep", () => {
+    const p = { ...base, ceilingStep: 2 };
+    const notes = run(p, 13, 600).filter((e) => e.kind === "note") as any[];
+    for (const e of notes) {
+      const sp = degreeToStepPos(e.degreeIndex, e.octave, scale.length);
+      expect(sp).toBeLessThanOrEqual(centerSp + 2);
+    }
+  });
+
+  // Note: a live clamp reshapes the register, which changes which pitch is chosen
+  // and hence (via the engine's melodic-state-dependent branches) the downstream
+  // stream — that's expected for a live-only feature. Share-link replay is safe
+  // because arc state is NOT serialized in the scene, so ceilingStep is never set
+  // during replay; the guarantee that matters is "absent ceilingStep = baseline":
+  it("absent ceilingStep reproduces baseline exactly", () => {
+    expect(run(base, 13, 300)).toEqual(run({ ...base, ceilingStep: undefined }, 13, 300));
+  });
+});
+
+describe("immediate pull response (freshPull truncation)", () => {
+  it("a newly-tapped pullDegree steers the line within a few notes", () => {
+    const p = knobsToParams({ density: 0.9, register: 0.5, restlessness: 0.5, silence: 0.05 }, tonicHz);
+    const rng = makeRng(9);
+    let state = initState();
+    for (let i = 0; i < 20; i++) state = nextEvent(state, scale, tonicHz, p, rng).state;
+    const target = 7;
+    const pulled = { ...p, pullDegree: target };
+    const degs: number[] = [];
+    for (let i = 0; i < 16 && degs.length < 10; i++) {
+      const r = nextEvent(state, scale, tonicHz, pulled, rng);
+      if (r.event.kind === "note") degs.push((r.event as any).degreeIndex);
+      state = r.state;
+    }
+    expect(degs).toContain(target);
+  });
+
+  it("pullDegree null keeps the stream identical (seeded replay unaffected)", () => {
+    const p = knobsToParams({ density: 0.7, register: 0.5, restlessness: 0.5, silence: 0.2 }, tonicHz);
+    expect(run({ ...p, pullDegree: null }, 5, 200)).toEqual(run(p, 5, 200));
+  });
+});

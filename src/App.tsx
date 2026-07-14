@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Knob } from "./components/Knob";
 import { PitchLadder } from "./components/PitchLadder";
+import { TaalMeter } from "./components/TaalMeter";
 import { importTuningFromUrl, DEFAULT_TUNING, type PortableTuning } from "./linkImport";
 import { knobsToParams, type Knobs } from "./conducting";
 import { initState, nextEvent, type EngineState } from "./engine";
@@ -8,10 +9,11 @@ import { makeRng } from "./rng";
 import { Scheduler } from "./scheduler";
 import { createVoice, type Voice } from "./voice";
 import { VOICE_IDS, VOICE_LABELS, getPreset, type VoiceId } from "./voicePresets";
-import { Tanpura } from "./tanpura";
+import { Tanpura, TANPURA_PRESET } from "./tanpura";
+import { thekaTickAt } from "./theka";
 import { RAGA_IDS, RAGAS, getRaga, ragaMasks, ragaBoost, ragaOrnaments } from "./ragas";
 import { getTaal, taalPositionAt, taalBias, TAAL_IDS, TAALS, type TaalId, type TaalPosition } from "./taal";
-import { arcKnobs, arcPhaseAt, ARC_DURATIONS_MIN, type ArcPhase } from "./arc";
+import { arcKnobs, arcPhaseAt, arcCeilingStep, ARC_DURATIONS_MIN, type ArcPhase } from "./arc";
 import { encodeWav } from "./recorder";
 import { createMbusClient, type MbusClient, type Publication, type BridgeState } from "./transport/mbus";
 import { LinkClock } from "./linkClock";
@@ -39,6 +41,10 @@ const DRONE_LVL_KEY = "mraga-drone-level";
 const ARC_KEY = "mraga-arc";
 const TAAL_KEY = "mraga-taal";
 const GAMAKA_KEY = "mraga-gamaka";
+const RHYTHMCELLS_KEY = "mraga-rhythmcells";
+const TIHAI_KEY = "mraga-tihai";
+const VAKRA_KEY = "mraga-vakra";
+const THEKA_KEY = "mraga-theka";
 const MIDI_MODE_KEY = "mraga-midi-mode";
 const STAGELOCK_KEY = "mraga-stagelock";
 
@@ -90,8 +96,42 @@ function loadTaal(): TaalId {
 function loadGamaka(): boolean {
   return localStorage.getItem(GAMAKA_KEY) === "1";
 }
+// Phrase-engine features (0.4). Fresh-session defaults: rhythm cells + vakra on
+// (fidelity), tihai off (opt-in flourish). Old share links carry no flag and
+// decode to false, so their note stream replays identically regardless.
+function loadRhythmCells(): boolean {
+  return localStorage.getItem(RHYTHMCELLS_KEY) !== "0"; // default on
+}
+function loadTihai(): boolean {
+  return localStorage.getItem(TIHAI_KEY) === "1"; // default off
+}
+function loadVakra(): boolean {
+  return localStorage.getItem(VAKRA_KEY) !== "0"; // default on
+}
+function loadTheka(): boolean {
+  return localStorage.getItem(THEKA_KEY) === "1"; // default off (barely-audible metric tick)
+}
 function loadMidiMode(): MidiMode {
   return localStorage.getItem(MIDI_MODE_KEY) === "mpe" ? "mpe" : "single";
+}
+
+// Sympathetic (taraf) string tuning: the raga's strong degrees (Sa + vadi +
+// samvadi) across a few octaves; Sa + nearest fifth when no raga / non-12 scale.
+// tonicHz is used unshifted, matching the drone convention.
+function tarafFreqs(tuning: PortableTuning, ragaId: string): number[] {
+  const { tonicHz, scaleCents } = tuning;
+  const raga = getRaga(ragaId);
+  let degrees: number[];
+  if (raga && scaleCents.length === 12) {
+    degrees = [...new Set([0, raga.vadi, raga.samvadi])];
+  } else {
+    let pa = 0, best = Infinity;
+    scaleCents.forEach((c, i) => { const d = Math.abs(c - 702); if (d < best) { best = d; pa = i; } });
+    degrees = [...new Set([0, pa])];
+  }
+  const freqs: number[] = [];
+  for (const o of [0, 1, 2]) for (const d of degrees) freqs.push(tonicHz * Math.pow(2, scaleCents[d] / 1200 + o));
+  return freqs;
 }
 
 export function App() {
@@ -130,6 +170,10 @@ export function App() {
   const [taalId, setTaalId] = useState<TaalId>(loadTaal);
   const [taalPos, setTaalPos] = useState<TaalPosition | null>(null);
   const [gamakaOn, setGamakaOn] = useState<boolean>(loadGamaka);
+  const [rhythmCellsOn, setRhythmCellsOn] = useState<boolean>(loadRhythmCells);
+  const [tihaiOn, setTihaiOn] = useState<boolean>(loadTihai);
+  const [vakraOn, setVakraOn] = useState<boolean>(loadVakra);
+  const [thekaOn, setThekaOn] = useState<boolean>(loadTheka);
   const [midiMode, setMidiMode] = useState<MidiMode>(loadMidiMode);
   const [stageLock, setStageLock] = useState<boolean>(() => localStorage.getItem(STAGELOCK_KEY) === "1");
 
@@ -156,6 +200,11 @@ export function App() {
   const arcRef = useRef<{ t0: number; durSec: number } | null>(null); // live arc window (audio clock)
   const taalRef = useRef(taalId);
   const gamakaRef = useRef(gamakaOn);
+  const rhythmCellsRef = useRef(rhythmCellsOn);
+  const tihaiRef = useRef(tihaiOn);
+  const vakraRef = useRef(vakraOn);
+  const thekaRef = useRef(thekaOn);
+  const thekaSchedRef = useRef<Scheduler | null>(null);
   // Knobs the user has grabbed while the arc is engaged — the arc stops driving
   // these so manual intervention takes over without a jump (M7).
   const takenKnobsRef = useRef<Set<ArcKnobKey>>(new Set());
@@ -176,6 +225,14 @@ export function App() {
   arcMinRef.current = arcMin;
   taalRef.current = taalId;
   gamakaRef.current = gamakaOn;
+  rhythmCellsRef.current = rhythmCellsOn;
+  tihaiRef.current = tihaiOn;
+  vakraRef.current = vakraOn;
+  thekaRef.current = thekaOn;
+
+  // Space toggles transport. Kept in a ref so the window listener (mounted once)
+  // always calls the latest togglePlay without re-subscribing each render.
+  const togglePlayRef = useRef<() => void | Promise<void>>(() => {});
 
   // Seed the internal BPM grid from the current audio clock (no-op before audio).
   function seedInternalClock() {
@@ -202,6 +259,21 @@ export function App() {
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
+
+  // Keyboard: Space = play/stop. Guarded so it never hijacks typing in a field
+  // (link/BPM inputs, selects, textareas) or an editable element.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code !== "Space" && e.key !== " ") return;
+      const el = document.activeElement as HTMLElement | null;
+      const tag = el?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el?.isContentEditable) return;
+      e.preventDefault();
+      void togglePlayRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // Character: the logo glows/flickers with the voice's output level — like a
   // struck string lighting up. Mirrors mdrone's incandescent RMS pulse.
@@ -276,7 +348,11 @@ export function App() {
   }
 
   async function ensureVoice(): Promise<Voice> {
-    if (!voiceRef.current) voiceRef.current = await createVoice();
+    if (!voiceRef.current) {
+      voiceRef.current = await createVoice();
+      // Tune the sympathetic bank so it rings on first play.
+      voiceRef.current.retuneTaraf(tarafFreqs(tuningRef.current, ragaRef.current));
+    }
     await voiceRef.current.resume();
     return voiceRef.current;
   }
@@ -286,15 +362,29 @@ export function App() {
     setRagaId(valid);
     ragaRef.current = valid;
     localStorage.setItem(RAGA_KEY, valid);
+    // Retune the sympathetic strings to the new raga's strong degrees.
+    voiceRef.current?.retuneTaraf(tarafFreqs(tuningRef.current, valid));
   }
+
+  // Retune the sympathetic bank whenever the tuning changes (mount is a no-op
+  // before audio; ensureVoice handles the first-play case).
+  useEffect(() => {
+    voiceRef.current?.retuneTaraf(tarafFreqs(tuning, ragaRef.current));
+  }, [tuning]);
 
   // --- tanpura drone (independent of melody PLAY/STOP) ---
   function startDrone(v: Voice) {
     v.setDroneLevel(droneLevelRef.current);
-    tanpuraRef.current!.start(v, () => ({
-      tonicHz: tuningRef.current.tonicHz, // unshifted: the drone holds the room's Sa
-      scaleCents: tuningRef.current.scaleCents,
-    }));
+    tanpuraRef.current!.start(v, () => {
+      const scaleCents = tuningRef.current.scaleCents;
+      const dr = getRaga(ragaRef.current); // live raga: the drone string follows it
+      return {
+        tonicHz: tuningRef.current.tonicHz, // unshifted: the drone holds the room's Sa
+        scaleCents,
+        // Raga-aware drone string: Malkauns tunes it to Ma, Marwa to Ni (both avoid Pa).
+        preferredCents: dr?.tanpuraString != null ? scaleCents[dr.tanpuraString] : undefined,
+      };
+    });
   }
 
   async function toggleDrone() {
@@ -311,6 +401,66 @@ export function App() {
     droneLevelRef.current = v;
     localStorage.setItem(DRONE_LVL_KEY, String(v));
     voiceRef.current?.setDroneLevel(v);
+  }
+
+  // --- soft theka (optional barely-audible metric taal tick) ---
+  // Shares the tanpura drone pool (rides the drone-level slider; 0 level silences
+  // it too). A dedicated scheduler quantized to the whole-beat metric grid; pure
+  // tick math lives in theka.ts. Independent of the melodic rng stream.
+  function currentMetricClock() {
+    return linkActiveRef.current
+      ? linkClockRef.current
+      : timingModeRef.current === "bpm"
+        ? internalClockRef.current
+        : null;
+  }
+
+  function startTheka(v: Voice) {
+    if (thekaSchedRef.current) return;
+    v.setDronePreset(TANPURA_PRESET); // muted tick timbre on the shared drone pool
+    const sched = new Scheduler({
+      now: () => v.ctx.currentTime,
+      lookaheadSec: 0.15,
+      pull: () => {
+        const clk = currentMetricClock();
+        // beatAt has no seconds-per-beat getter — derive over a 1s window; fall
+        // back to the internal BPM when no metric clock is running.
+        const beatSec = clk?.valid ? 1 / Math.max(1e-6, clk.beatAt(1) - clk.beatAt(0)) : 60 / Math.max(1, bpmRef.current);
+        const taal = getTaal(taalRef.current);
+        // No taal or no metric clock → stay silent (the cycle isn't defined).
+        if (!taal || !clk || !clk.valid) return { kind: "rest", ioiSec: beatSec, phraseEnd: false };
+        const beat = clk.beatAt(sched.previewOnset(v.ctx.currentTime));
+        const tick = thekaTickAt(taal, beat);
+        return tick.play
+          ? { kind: "note", pitchHz: tuningRef.current.tonicHz, velocity: tick.velocity, ioiSec: beatSec, durationHint: beatSec, degreeIndex: 0, octave: 0 }
+          : { kind: "rest", ioiSec: beatSec, phraseEnd: false };
+      },
+      onNote: (e) => v.pluckDrone(e.pitchHz, e.velocity),
+      onRest: () => {},
+      quantize: (raw) => {
+        const clk = currentMetricClock();
+        return clk?.valid ? clk.nextGridTime(raw, 1.0) : raw; // whole-beat grid
+      },
+    });
+    sched.run(50);
+    thekaSchedRef.current = sched;
+  }
+
+  function stopTheka() {
+    thekaSchedRef.current?.stop();
+    thekaSchedRef.current = null;
+  }
+
+  function toggleTheka() {
+    const next = !thekaOn;
+    setThekaOn(next);
+    thekaRef.current = next;
+    localStorage.setItem(THEKA_KEY, next ? "1" : "0");
+    if (next) {
+      if (playingRef.current && voiceRef.current) startTheka(voiceRef.current);
+    } else {
+      stopTheka();
+    }
   }
 
   // --- performance arc ---
@@ -332,6 +482,20 @@ export function App() {
     if (arcRef.current && (ARC_KNOBS as readonly string[]).includes(key)) {
       takenKnobsRef.current.add(key as ArcKnobKey);
     }
+    // Density responsiveness: a sharp DENSITY rise mid-wait pulls the scheduler's
+    // next pull forward (within ~1 beat) so the new rate is heard now, not after a
+    // long rest finishes. Nudge only moves timing — it inserts/removes no rng draw.
+    if (key === "density" && playingRef.current && v - knobsRef.current.density > 0.15) {
+      const clock = linkActiveRef.current
+        ? linkClockRef.current
+        : timingModeRef.current === "bpm"
+          ? internalClockRef.current
+          : null;
+      // clock exposes beatAt() but no seconds-per-beat getter — derive over a 1s
+      // window; fall back to ~0.6s of free-timing pulse when there's no metric clock.
+      const beatSec = clock?.valid ? 1 / Math.max(1e-6, clock.beatAt(1) - clock.beatAt(0)) : 0.6;
+      schedRef.current?.nudge(beatSec);
+    }
     setKnobs((k) => ({ ...k, [key]: v }));
   }
 
@@ -348,6 +512,27 @@ export function App() {
     setGamakaOn(next);
     gamakaRef.current = next;
     localStorage.setItem(GAMAKA_KEY, next ? "1" : "0");
+  }
+
+  function toggleRhythmCells() {
+    const next = !rhythmCellsOn;
+    setRhythmCellsOn(next);
+    rhythmCellsRef.current = next;
+    localStorage.setItem(RHYTHMCELLS_KEY, next ? "1" : "0");
+  }
+
+  function toggleTihai() {
+    const next = !tihaiOn;
+    setTihaiOn(next);
+    tihaiRef.current = next;
+    localStorage.setItem(TIHAI_KEY, next ? "1" : "0");
+  }
+
+  function toggleVakra() {
+    const next = !vakraOn;
+    setVakraOn(next);
+    vakraRef.current = next;
+    localStorage.setItem(VAKRA_KEY, next ? "1" : "0");
   }
 
   function toggleStageLock() {
@@ -435,6 +620,10 @@ export function App() {
       droneLevel,
       taal: taalId,
       gamaka: gamakaOn,
+      rhythmCells: rhythmCellsOn,
+      tihai: tihaiOn,
+      vakra: vakraOn,
+      theka: thekaOn,
     };
   }
 
@@ -478,6 +667,32 @@ export function App() {
       setGamakaOn(s.gamaka);
       gamakaRef.current = s.gamaka;
       localStorage.setItem(GAMAKA_KEY, s.gamaka ? "1" : "0");
+    }
+    // Phrase-engine flags (0.4). Old links lack these → decode to false → replay
+    // the original note stream unchanged.
+    if (typeof s.rhythmCells === "boolean") {
+      setRhythmCellsOn(s.rhythmCells);
+      rhythmCellsRef.current = s.rhythmCells;
+      localStorage.setItem(RHYTHMCELLS_KEY, s.rhythmCells ? "1" : "0");
+    }
+    if (typeof s.tihai === "boolean") {
+      setTihaiOn(s.tihai);
+      tihaiRef.current = s.tihai;
+      localStorage.setItem(TIHAI_KEY, s.tihai ? "1" : "0");
+    }
+    if (typeof s.vakra === "boolean") {
+      setVakraOn(s.vakra);
+      vakraRef.current = s.vakra;
+      localStorage.setItem(VAKRA_KEY, s.vakra ? "1" : "0");
+    }
+    if (typeof s.theka === "boolean") {
+      setThekaOn(s.theka);
+      thekaRef.current = s.theka;
+      localStorage.setItem(THEKA_KEY, s.theka ? "1" : "0");
+      if (playingRef.current && voiceRef.current) {
+        if (s.theka) startTheka(voiceRef.current);
+        else stopTheka();
+      }
     }
     if (typeof s.droneLevel === "number") changeDroneLevel(Math.max(0, Math.min(1, s.droneLevel)));
     if (typeof s.drone === "boolean") {
@@ -591,6 +806,7 @@ export function App() {
 
   function stopPlayback() {
     schedRef.current?.stop();
+    stopTheka();
     playingRef.current = false;
     setPlaying(false);
     setActiveDegree(null);
@@ -619,6 +835,7 @@ export function App() {
     voice.setPreset(getPreset(voiceId));
     voice.setVolume(volume);
     if (droneOnRef.current && !tanpuraRef.current!.running) startDrone(voice);
+    if (thekaRef.current) startTheka(voice); // self-silences until a taal + metric clock exist
     seedInternalClock();
     stateRef.current = initState();
     arcRef.current = arcMinRef.current > 0
@@ -634,6 +851,7 @@ export function App() {
         // Performance arc: override the driven knobs along the alap→jor→jhala
         // trajectory; when it completes, end the performance.
         let kn = knobsRef.current;
+        let arcT: number | null = null; // arc progress 0..1 (badhat register unlock)
         const arc = arcRef.current;
         if (arc) {
           const t = (voiceRef.current!.ctx.currentTime - arc.t0) / arc.durSec;
@@ -641,6 +859,7 @@ export function App() {
             arcRef.current = null;
             setTimeout(stopPlayback, 0); // outside the tick — let scheduled notes ring out
           }
+          arcT = Math.min(1, t);
           kn = { ...kn, ...arcKnobs(Math.min(1, t)) };
           // Manual takeover: knobs the user grabbed mid-arc stay under user
           // control (the slider already shows the arc's value → no jump).
@@ -648,6 +867,9 @@ export function App() {
         }
         const scale = tuningRef.current.scaleCents;
         const params = knobsToParams(kn, tonicHz);
+        // Badhat: during the arc, progressively unlock the upper register (alap
+        // opens ~a fifth above center to the full span by jor). No-op when arc off.
+        if (arcT != null) params.ceilingStep = arcCeilingStep(arcT, params.registerHalfSpanSteps);
         // Raga grammar (only defined on a 12-degree lattice).
         const raga = getRaga(ragaRef.current);
         if (raga && scale.length === 12) {
@@ -655,12 +877,22 @@ export function App() {
           params.arohaMask = masks.aroha;
           params.avarohaMask = masks.avaroha;
           params.degreeBoost = ragaBoost(raga, 12);
+          // Weak/durbal degrees (e.g. Marwa's Sa): damp their intrinsic resting
+          // pull so the line stops homing to them despite their strength.
+          params.degreeAttenuate = raga.weak;
           params.pakadSteps = raga.pakad;
           params.pakadProb = 0.35;
           // Gamaka: authored ornaments from the raga, when enabled.
           if (gamakaRef.current) {
             params.gamaka = ragaOrnaments(raga);
             params.gamakaEnabled = true;
+          }
+          // Vakra descent: choose the aroha/avaroha mask per phrase segment and
+          // prefer the authored crooked path. avarohaPath is undefined for
+          // non-vakra ragas, so the flag is a no-op there.
+          if (vakraRef.current) {
+            params.vakraEnabled = true;
+            params.avarohaPath = raga.avarohaPath;
           }
         }
         // Taal: bias phrase/accent/rest/resolution toward structural points, but
@@ -673,17 +905,34 @@ export function App() {
               ? internalClockRef.current
               : null;
           if (clock && clock.valid) {
-            params.taalBias = taalBias(taalPositionAt(taal, clock.beatAt(voiceRef.current!.ctx.currentTime)));
+            // Bias from where the note will actually sound (post-quantize onset),
+            // not the raw pull time — else events near a matra boundary quantize
+            // across it and pick up the neighbour matra's bias.
+            const onsetTime = sched.previewOnset(voiceRef.current!.ctx.currentTime);
+            const beat = clock.beatAt(onsetTime);
+            params.taalBias = taalBias(taalPositionAt(taal, beat));
+            // Tihai needs the metric position + cycle length to land its final
+            // stroke exactly on sam (planTihai reduces the beat mod the cycle).
+            params.matraPosition = beat;
+            params.cycleMatras = taal.matras;
+            params.tihaiEnabled = tihaiRef.current;
           }
         }
         params.pullDegree = pullRef.current;
+        params.rhythmCellsEnabled = rhythmCellsRef.current;
         const r = nextEvent(stateRef.current, scale, tonicHz, params, rngRef.current);
         stateRef.current = r.state;
         return r.event;
       },
       onNote: (e, time) => {
-        voiceRef.current!.pluck(e.pitchHz, e.velocity, e.glideFromHz);
-        midiOutRef.current?.sendNote(e.pitchHz, e.velocity, (e.durationHint || 0.5) * 1000);
+        if (e.noPluck) {
+          // Andolan tail: bend the ringing note in place — no re-strike, no MIDI
+          // note-on — so a slow waver reads as pitch movement, not hammer hits.
+          voiceRef.current!.bend(e.pitchHz, e.durationHint || 0.08);
+        } else {
+          voiceRef.current!.pluck(e.pitchHz, e.velocity, e.glideFromHz);
+          midiOutRef.current?.sendNote(e.pitchHz, e.velocity, (e.durationHint || 0.5) * 1000);
+        }
         const delayMs = Math.max(0, (time - voiceRef.current!.ctx.currentTime) * 1000);
         setTimeout(() => { if (playingRef.current) setActiveDegree(e.degreeIndex); }, delayMs);
       },
@@ -702,6 +951,7 @@ export function App() {
     sched.run(25);
     setPlaying(true);
   }
+  togglePlayRef.current = togglePlay;
 
   const octLabel = octaveShift > 0 ? `+${octaveShift}` : String(octaveShift);
   // Raga palette for the ladder display: union of ascent+descent (untrimmed).
@@ -759,9 +1009,9 @@ export function App() {
 
   return (
     <main className="mraga">
-      <div className="row">
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <header className="masthead">
+        <div className="brand">
+          <div className="brand-mark">
             <h1 ref={titleRef} className="title-art wordmark" aria-label="mraga" style={{ margin: 0 }}>
               <img src={WORDMARK_URL} alt="mraga" style={{ height: 44, display: "block" }} draggable={false} />
             </h1>
@@ -769,40 +1019,7 @@ export function App() {
           </div>
           <div className="tagline">a conducted line over the drone</div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", justifyContent: "flex-end" }}>
-          <label className="sel" title="Saved presets — recall a sound you saved.">
-            PRESET
-            <select value={selectedPreset} aria-label="presets" onChange={(e) => recallPreset(e.target.value)}>
-              <option value="">—</option>
-              {presets.map((p) => (
-                <option key={p.name} value={p.name}>{p.name}</option>
-              ))}
-            </select>
-          </label>
-          <button type="button" className="chip-btn" onClick={saveCurrentPreset} title="Save the current sound as a named preset.">
-            save
-          </button>
-          {selectedPreset && (
-            <button type="button" className="chip-btn" onClick={removeSelectedPreset} title="Delete the selected preset.">
-              ✕
-            </button>
-          )}
-          <button
-            type="button"
-            className="chip-btn"
-            onClick={() => reseed((Math.random() * 0x100000000) >>> 0)}
-            title="Reroll — generate a different improvisation. The displayed seed changes each click and is saved in the share link, so a shared sound replays identically."
-          >
-            🎲 {seed.toString(16)}
-          </button>
-          <button
-            type="button"
-            className="chip-btn"
-            onClick={shareScene}
-            title="Copy a link that restores this exact sound (voice, knobs, octave, volume, timing, theme, tuning, seed)."
-          >
-            {shared ? "copied ✓" : "SHARE"}
-          </button>
+        <div className="masthead-meta">
           <label className="sel" title="Colour theme — toggle to taste.">
             THEME
             <select value={theme} aria-label="theme" onChange={(e) => setTheme(e.target.value as ThemeId)}>
@@ -818,9 +1035,9 @@ export function App() {
             ◈ linked: {tuning.label}
           </span>
         </div>
-      </div>
+      </header>
 
-      <div className="row" style={{ margin: "16px 0" }}>
+      <div className="transport">
         <input
           className="link-field"
           placeholder="paste mdrone link …"
@@ -830,7 +1047,7 @@ export function App() {
           onChange={(e) => setLinkInput(e.target.value)}
           onBlur={loadLink}
         />
-        <button type="button" className="play" onClick={togglePlay} title="Start or stop the generative voice.">
+        <button type="button" className="play" onClick={togglePlay} title="Start or stop the generative voice (or press Space).">
           {playing ? "■ STOP" : "▶ PLAY"}
         </button>
         <button
@@ -857,192 +1074,293 @@ export function App() {
         </div>
       )}
 
-      <PitchLadder
-        scaleCents={tuning.scaleCents}
-        activeDegree={activeDegree}
-        allowedDegrees={ragaAllowed}
-        pulledDegree={pullDegree}
-        roles={ladderRoles}
-        onSelectDegree={conduct}
-      />
-      <div className="ladder-readout deg-label" aria-live="polite" style={{ minHeight: 18, marginTop: 2 }}>
-        {activeReadout ? (
-          <>
-            <strong>{activeReadout.name}</strong>
-            {" · "}
-            {activeReadout.cents.toFixed(0)}¢ · {activeReadout.ratio.toFixed(3)}×
-            {activeReadout.role && <> · <span className="chip" style={{ padding: "0 6px" }}>{activeReadout.role}</span></>}
-          </>
-        ) : (
-          <span style={{ opacity: 0.6 }}>tap a column to conduct — pull the line toward a degree</span>
-        )}
-        {pullDegree != null && <span style={{ marginLeft: 8, opacity: 0.85 }}>→ pulling toward {SARGAM[pullDegree] ?? pullDegree}</span>}
-      </div>
+      <section className="stage" aria-label="pitch ladder and taal cycle">
+        <PitchLadder
+          scaleCents={tuning.scaleCents}
+          activeDegree={activeDegree}
+          allowedDegrees={ragaAllowed}
+          pulledDegree={pullDegree}
+          roles={ladderRoles}
+          onSelectDegree={conduct}
+        />
+        <TaalMeter taal={getTaal(taalId)} pos={taalPos} />
+        <div className="ladder-readout deg-label" aria-live="polite" style={{ minHeight: 18, marginTop: 2 }}>
+          {activeReadout ? (
+            <>
+              <strong>{activeReadout.name}</strong>
+              {" · "}
+              {activeReadout.cents.toFixed(0)}¢ · {activeReadout.ratio.toFixed(3)}×
+              {activeReadout.role && <> · <span className="chip" style={{ padding: "0 6px" }}>{activeReadout.role}</span></>}
+            </>
+          ) : (
+            <span style={{ opacity: 0.6 }}>tap a column to conduct — pull the line toward a degree</span>
+          )}
+          {pullDegree != null && <span style={{ marginLeft: 8, opacity: 0.85 }}>→ pulling toward {SARGAM[pullDegree] ?? pullDegree}</span>}
+        </div>
+      </section>
 
-      <div className="knobs" aria-disabled={stageLock}>
-        <Knob label={arcOwns("density") ? "DENSITY ◆" : "DENSITY"} lowPole="sparse" highPole="busy" value={knobVal("density")} onChange={(v) => setKnob("density", v)} title={"How often notes occur — sparse to busy." + (stageLock ? " (Stage Lock on)" : arcOwns("density") ? " ◆ driven by the Arc — grab to take over." : "")} />
-        <Knob label={arcOwns("register") ? "REGISTER ◆" : "REGISTER"} lowPole="low" highPole="high" value={knobVal("register")} onChange={(v) => setKnob("register", v)} title={"Centre pitch of the melodic line — low to high." + (stageLock ? " (Stage Lock on)" : arcOwns("register") ? " ◆ driven by the Arc — grab to take over." : "")} />
-        <Knob label={arcOwns("restlessness") ? "RESTLESS ◆" : "RESTLESS"} lowPole="calm" highPole="roam" value={knobVal("restlessness")} onChange={(v) => setKnob("restlessness", v)} title={"How far the line wanders from home — calm to roaming." + (stageLock ? " (Stage Lock on)" : arcOwns("restlessness") ? " ◆ driven by the Arc — grab to take over." : "")} />
+      <section className="panel perform" aria-label="perform">
+        <div className="panel-head">
+          <span className="panel-title">Perform</span>
+          <button
+            type="button"
+            className="chip-btn reroll"
+            onClick={() => reseed((Math.random() * 0x100000000) >>> 0)}
+            title="Reroll — generate a different improvisation. The displayed seed changes each click and is saved in the share link, so a shared sound replays identically."
+          >
+            🎲 {seed.toString(16)}
+          </button>
+        </div>
+        <div className="knobs" aria-disabled={stageLock}>
+        <Knob label={arcOwns("density") ? "DENSITY ◆" : "DENSITY"} lowPole="sparse" highPole="busy" value={knobVal("density")} onChange={(v) => setKnob("density", v)} title={"How often notes occur — sparse to busy. Responds within a beat." + (stageLock ? " (Stage Lock on)" : arcOwns("density") ? " ◆ driven by the Arc — grab to take over." : "")} />
+        <Knob label={arcOwns("register") ? "REGISTER ◆" : "REGISTER"} lowPole="low" highPole="high" value={knobVal("register")} onChange={(v) => setKnob("register", v)} title={"Centre pitch of the melodic line — low to high. Takes effect at the next phrase." + (stageLock ? " (Stage Lock on)" : arcOwns("register") ? " ◆ driven by the Arc — grab to take over." : "")} />
+        <Knob label={arcOwns("restlessness") ? "RESTLESS ◆" : "RESTLESS"} lowPole="calm" highPole="roam" value={knobVal("restlessness")} onChange={(v) => setKnob("restlessness", v)} title={"How far the line wanders from home — calm to roaming. Takes effect at the next phrase." + (stageLock ? " (Stage Lock on)" : arcOwns("restlessness") ? " ◆ driven by the Arc — grab to take over." : "")} />
         <Knob label={arcOwns("silence") ? "SILENCE ◆" : "SILENCE"} lowPole="full" highPole="spacious" value={knobVal("silence")} onChange={(v) => setKnob("silence", v)} title={"How much rest and space between phrases — full to spacious." + (stageLock ? " (Stage Lock on)" : arcOwns("silence") ? " ◆ driven by the Arc — grab to take over." : "")} />
         <Knob label={arcOwns("rhythm") ? "RHYTHM ◆" : "RHYTHM"} lowPole="loose" highPole="tight" value={knobVal("rhythm")} onChange={(v) => setKnob("rhythm", v)} title={"Timing feel — loose/rubato to a tight, metronomic pulse." + (stageLock ? " (Stage Lock on)" : arcOwns("rhythm") ? " ◆ driven by the Arc — grab to take over." : "")} />
         <Knob label="THEME" lowPole="free" highPole="locked" value={knobVal("theme")} onChange={(v) => setKnob("theme", v)} title={"Motif lock — invent new material (free) ↔ repeat one figure (locked). Higher = less random." + (stageLock ? " (Stage Lock on)" : "")} />
-        <Knob label="FOCUS" lowPole="wide" highPole="tight" value={knobVal("focus")} onChange={(v) => setKnob("focus", v)} title={"Note palette — all scale degrees (wide) ↔ a few characteristic notes (tight)." + (stageLock ? " (Stage Lock on)" : "")} />
+        <Knob label="FOCUS" lowPole="wide" highPole="tight" value={knobVal("focus")} onChange={(v) => setKnob("focus", v)} title={"Note palette — all scale degrees (wide) ↔ a few characteristic notes (tight). Takes effect at the next phrase." + (stageLock ? " (Stage Lock on)" : "")} />
       </div>
+      </section>
 
-      <div className="row footer chip">
-        <label className="sel" title="Raga grammar — constrains ascent/descent to the raga's notes, leans on its vadi/samvadi, and weaves in its signature phrase (pakad). free = no grammar (tuning + FOCUS only).">
-          RAGA
-          <select value={ragaId} aria-label="raga" onChange={(e) => selectRaga(e.target.value)}>
-            <option value="">free</option>
-            {RAGA_IDS.map((id) => (
-              <option key={id} value={id}>{RAGAS[id].label}</option>
-            ))}
-          </select>
-          {activeRaga && <span style={{ marginLeft: 6 }} className="deg-label">· {activeRaga.mood}</span>}
-        </label>
+      <details className="panel" open>
+        <summary className="panel-head">
+          <span className="panel-title">Grammar</span>
+          <span className="panel-hint deg-label">raga · taal · phrasing</span>
+        </summary>
+        <div className="cluster">
+          <label className="sel" title="Raga grammar — constrains ascent/descent to the raga's notes, leans on its vadi/samvadi, and weaves in its signature phrase (pakad). free = no grammar (tuning + FOCUS only).">
+            RAGA
+            <select value={ragaId} aria-label="raga" onChange={(e) => selectRaga(e.target.value)}>
+              <option value="">free</option>
+              {RAGA_IDS.map((id) => (
+                <option key={id} value={id}>{RAGAS[id].label}</option>
+              ))}
+            </select>
+            {activeRaga && <span style={{ marginLeft: 6 }} className="deg-label">· {activeRaga.mood}</span>}
+          </label>
 
-        <button
-          type="button"
-          className={"chip-btn" + (droneOn ? " on" : "")}
-          onClick={toggleDrone}
-          title="Built-in tanpura (Pa Sa Sa Sa̠ cycle on the scale's own fifth) — mraga stands alone, no mdrone tab needed. Plays independently of ▶/■."
-        >
-          ◉ drone {droneOn ? "on" : "off"}
-        </button>
-        {droneOn && (
-          <span className="vol" title="Tanpura level.">
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={droneLevel}
-              aria-label="drone level"
-              onChange={(e) => changeDroneLevel(parseFloat(e.target.value))}
-            />
+          <label className="sel" title="Taal — an optional rhythmic cycle (teental 16 / jhaptal 10 / rupak 7 / ektaal 12). Biases phrase starts, accents, rests and resolution toward the cycle's structural points (especially sam). Needs a metric grid (TIMING = bpm or link); free timing stays rubato.">
+            TAAL
+            <select value={taalId} aria-label="taal" onChange={(e) => changeTaal(e.target.value as TaalId)}>
+              <option value="off">off</option>
+              {TAAL_IDS.filter((id) => id !== "off").map((id) => (
+                <option key={id} value={id}>{TAALS[id as Exclude<TaalId, "off">].label} {TAALS[id as Exclude<TaalId, "off">].matras}</option>
+              ))}
+            </select>
+          </label>
+
+          <button
+            type="button"
+            className={"chip-btn" + (thekaOn ? " on" : "")}
+            onClick={toggleTheka}
+            aria-pressed={thekaOn}
+            title="Theka — a soft metric tick on the taal's beats (louder on sam, silent on khali) so the cycle is felt. Needs a taal and bpm/link timing; shares the drone level."
+          >
+            theka {thekaOn ? "on" : "off"}
+            {thekaOn && (taalId === "off" || timingMode === "free") && <span style={{ opacity: 0.7 }}> (needs taal + bpm)</span>}
+          </button>
+
+          <button
+            type="button"
+            className={"chip-btn" + (gamakaOn ? " on" : "")}
+            onClick={toggleGamaka}
+            aria-pressed={gamakaOn}
+            title="Gamaka — authored ornaments (meend glide, andolan oscillation, kan grace, rare murki) drawn from the selected raga's grammar. Needs a raga; deterministic and seeded."
+          >
+            gamaka {gamakaOn ? "on" : "off"}
+            {gamakaOn && !activeRaga && <span style={{ opacity: 0.7 }}> (pick a raga)</span>}
+          </button>
+
+          <button
+            type="button"
+            className={"chip-btn" + (rhythmCellsOn ? " on" : "")}
+            onClick={toggleRhythmCells}
+            aria-pressed={rhythmCellsOn}
+            title="Rhythm cells — per-phrase rhythmic figures (subdivisions & triplets at higher density) instead of a flat pulse. Deterministic and seeded."
+          >
+            rhythm cells {rhythmCellsOn ? "on" : "off"}
+          </button>
+
+          <button
+            type="button"
+            className={"chip-btn" + (tihaiOn ? " on" : "")}
+            onClick={toggleTihai}
+            aria-pressed={tihaiOn}
+            title="Tihai — a cadential figure repeated three times to land exactly on sam. Needs a taal (metric cycle). Deterministic and seeded."
+          >
+            tihai {tihaiOn ? "on" : "off"}
+            {tihaiOn && taalId === "off" && <span style={{ opacity: 0.7 }}> (pick a taal)</span>}
+          </button>
+
+          <button
+            type="button"
+            className={"chip-btn" + (vakraOn ? " on" : "")}
+            onClick={toggleVakra}
+            aria-pressed={vakraOn}
+            title="Vakra — crooked melodic motion: phrase direction chosen per segment, following the raga's authored zig-zag descent where it has one (e.g. Desh, Khamaj)."
+          >
+            vakra {vakraOn ? "on" : "off"}
+          </button>
+
+          <label className="sel" title="Performance arc — DENSITY, RHYTHM, SILENCE, REGISTER and RESTLESS follow a slow alap → jor → jhala trajectory (THEME and FOCUS stay yours). Grab a driven knob to take it over; playback ends when the arc completes.">
+            ARC
+            <select value={String(arcMin)} aria-label="performance arc" onChange={(e) => changeArc(parseInt(e.target.value, 10))}>
+              <option value="0">off</option>
+              {ARC_DURATIONS_MIN.map((m) => (
+                <option key={m} value={String(m)}>{m} min</option>
+              ))}
+            </select>
+            {arcStatus && (
+              <span style={{ marginLeft: 6 }} aria-live="polite">
+                · {arcStatus.phase} {arcStatus.pct}% · {fmtRemaining(arcStatus.remainingSec)} left
+                {(() => {
+                  const owned = ARC_KNOBS.filter((k) => !takenKnobsRef.current.has(k));
+                  return owned.length ? <span style={{ opacity: 0.7 }}> · owns {owned.join(" ").toUpperCase()}</span> : <span style={{ opacity: 0.7 }}> · manual</span>;
+                })()}
+              </span>
+            )}
+          </label>
+        </div>
+      </details>
+
+      <section className="panel" aria-label="sound">
+        <div className="panel-head"><span className="panel-title">Sound</span></div>
+        <div className="cluster">
+          <label className="sel" title="Voice flavour — the struck/plucked timbre.">
+            VOICE
+            <select value={voiceId} aria-label="voice" onChange={(e) => selectVoice(e.target.value as VoiceId)}>
+              {VOICE_IDS.map((id) => (
+                <option key={id} value={id}>{VOICE_LABELS[id]}</option>
+              ))}
+            </select>
+          </label>
+
+          <span className="oct" title="Shift the whole voice up or down by whole octaves (−2 to +2).">
+            OCT
+            <button type="button" onClick={() => changeOctave(-1)} aria-label="octave down">−</button>
+            <span style={{ minWidth: 18, textAlign: "center" }}>{octLabel}</span>
+            <button type="button" onClick={() => changeOctave(1)} aria-label="octave up">+</button>
           </span>
-        )}
 
-        <label className="sel" title="Performance arc — DENSITY, RHYTHM, SILENCE, REGISTER and RESTLESS follow a slow alap → jor → jhala trajectory (THEME and FOCUS stay yours). Grab a driven knob to take it over; playback ends when the arc completes.">
-          ARC
-          <select value={String(arcMin)} aria-label="performance arc" onChange={(e) => changeArc(parseInt(e.target.value, 10))}>
-            <option value="0">off</option>
-            {ARC_DURATIONS_MIN.map((m) => (
-              <option key={m} value={String(m)}>{m} min</option>
-            ))}
-          </select>
-          {arcStatus && (
-            <span style={{ marginLeft: 6 }} aria-live="polite">
-              · {arcStatus.phase} {arcStatus.pct}% · {fmtRemaining(arcStatus.remainingSec)} left
-              {(() => {
-                const owned = ARC_KNOBS.filter((k) => !takenKnobsRef.current.has(k));
-                return owned.length ? <span style={{ opacity: 0.7 }}> · owns {owned.join(" ").toUpperCase()}</span> : <span style={{ opacity: 0.7 }}> · manual</span>;
-              })()}
+          <span className="vol" title="Master output volume.">
+            VOL
+            <input type="range" min={0} max={1} step={0.01} value={volume} aria-label="volume" onChange={(e) => changeVolume(parseFloat(e.target.value))} />
+          </span>
+
+          <button
+            type="button"
+            className={"chip-btn" + (droneOn ? " on" : "")}
+            onClick={toggleDrone}
+            title="Built-in tanpura (Pa Sa Sa Sa̠ cycle on the scale's own fifth) — mraga stands alone, no mdrone tab needed. Plays independently of ▶/■."
+          >
+            ◉ drone {droneOn ? "on" : "off"}
+          </button>
+          {droneOn && (
+            <span className="vol" title="Tanpura level.">
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={droneLevel}
+                aria-label="drone level"
+                onChange={(e) => changeDroneLevel(parseFloat(e.target.value))}
+              />
             </span>
           )}
-        </label>
+        </div>
+      </section>
 
-        <label className="sel" title="Taal — an optional rhythmic cycle (teental 16 / jhaptal 10 / rupak 7 / ektaal 12). Biases phrase starts, accents, rests and resolution toward the cycle's structural points (especially sam). Needs a metric grid (TIMING = bpm or link); free timing stays rubato.">
-          TAAL
-          <select value={taalId} aria-label="taal" onChange={(e) => changeTaal(e.target.value as TaalId)}>
-            <option value="off">off</option>
-            {TAAL_IDS.filter((id) => id !== "off").map((id) => (
-              <option key={id} value={id}>{TAALS[id as Exclude<TaalId, "off">].label} {TAALS[id as Exclude<TaalId, "off">].matras}</option>
-            ))}
-          </select>
-          {taalPos && (
-            <span style={{ marginLeft: 6 }} aria-live="polite" title="Current cycle position">
-              · {taalPos.matra + 1}/{getTaal(taalId)!.matras}
-              {taalPos.isSam ? " ✳ sam" : taalPos.isKhali ? " ○ khali" : taalPos.isVibhagStart ? " |" : ""}
-            </span>
+      <section className="panel" aria-label="timing">
+        <div className="panel-head"><span className="panel-title">Timing</span></div>
+        <div className="cluster">
+          <label className="sel" title="Timing: free (ametric) · bpm (snap onsets to the internal grid) · link (snap to Ableton Link via the mpump Link Bridge).">
+            TIMING
+            <select value={timingMode} aria-label="timing mode" onChange={(e) => changeTiming(e.target.value as TimingMode)}>
+              <option value="free">free</option>
+              <option value="bpm">bpm grid</option>
+              <option value="link">ableton link</option>
+            </select>
+            {timingMode === "link" && <span style={{ marginLeft: 6 }}>· {linkStatus}</span>}
+          </label>
+
+          <span className="bpm" title="Tempo for the internal BPM grid (used when TIMING = bpm; overridden by Ableton Link).">
+            BPM
+            <input type="number" min={40} max={240} step={1} value={bpm} aria-label="bpm" onChange={(e) => changeBpm(parseFloat(e.target.value))} />
+          </span>
+        </div>
+      </section>
+
+      <details className="panel">
+        <summary className="panel-head">
+          <span className="panel-title">I/O</span>
+          <span className="panel-hint deg-label">presets · share · record · midi</span>
+        </summary>
+        <div className="cluster">
+          <label className="sel" title="Saved presets — recall a sound you saved.">
+            PRESET
+            <select value={selectedPreset} aria-label="presets" onChange={(e) => recallPreset(e.target.value)}>
+              <option value="">—</option>
+              {presets.map((p) => (
+                <option key={p.name} value={p.name}>{p.name}</option>
+              ))}
+            </select>
+          </label>
+          <button type="button" className="chip-btn" onClick={saveCurrentPreset} title="Save the current sound as a named preset.">
+            save
+          </button>
+          {selectedPreset && (
+            <button type="button" className="chip-btn" onClick={removeSelectedPreset} title="Delete the selected preset.">
+              ✕
+            </button>
           )}
-        </label>
 
-        <button
-          type="button"
-          className={"chip-btn" + (gamakaOn ? " on" : "")}
-          onClick={toggleGamaka}
-          aria-pressed={gamakaOn}
-          title="Gamaka — authored ornaments (meend glide, andolan oscillation, kan grace, rare murki) drawn from the selected raga's grammar. Needs a raga; deterministic and seeded."
-        >
-          gamaka {gamakaOn ? "on" : "off"}
-          {gamakaOn && !activeRaga && <span style={{ opacity: 0.7 }}> (pick a raga)</span>}
-        </button>
+          <button
+            type="button"
+            className="chip-btn"
+            onClick={shareScene}
+            title="Copy a link that restores this exact sound (voice, knobs, octave, volume, timing, theme, tuning, seed)."
+          >
+            {shared ? "copied ✓" : "SHARE"}
+          </button>
 
-        <button
-          type="button"
-          className={"chip-btn" + (recording ? " on" : "")}
-          onClick={toggleRec}
-          title="Record the master output (melody + drone + reverb); stopping downloads a 16-bit stereo WAV."
-        >
-          {recording ? "■ rec…" : "● rec"}
-        </button>
+          <button
+            type="button"
+            className={"chip-btn" + (recording ? " on" : "")}
+            onClick={toggleRec}
+            title="Record the master output (melody + drone + reverb); stopping downloads a 16-bit stereo WAV."
+          >
+            {recording ? "■ rec…" : "● rec"}
+          </button>
 
-        <button
-          type="button"
-          className={"chip-btn" + (mbusOn ? " on" : "")}
-          onClick={toggleMbus}
-          title="Publish mraga's audio to the mbus patchbay so other m-suite tabs can subscribe (needs the bridge companion; Chrome/Firefox). Off by default, never persisted."
-        >
-          ⇄ mbus{mbusOn ? (mbusState === "connected" ? " · live" : " · searching…") : " off"}
-        </button>
-      </div>
+          <button
+            type="button"
+            className={"chip-btn" + (midiName ? " on" : "")}
+            onClick={toggleMidi}
+            aria-pressed={!!midiName}
+            title="Send the generated notes to an external MIDI synth/DAW (microtonal via pitch-bend). Click to connect the first available output."
+          >
+            MIDI {midiName ? `· ${midiName}` : "off"}
+          </button>
 
-      <div className="row footer chip">
-        <label className="sel" title="Voice flavour — the struck/plucked timbre.">
-          VOICE
-          <select value={voiceId} aria-label="voice" onChange={(e) => selectVoice(e.target.value as VoiceId)}>
-            {VOICE_IDS.map((id) => (
-              <option key={id} value={id}>{VOICE_LABELS[id]}</option>
-            ))}
-          </select>
-        </label>
+          <label className="sel" title="MIDI mode. Single Channel: works with any synth, but a new note's pitch-bend retunes every note still ringing (overlap limitation). MPE: rotates notes across channels 2–8, each with its own bend, so overlapping microtonal notes never retune each other (needs an MPE-capable synth).">
+            MODE
+            <select value={midiMode} aria-label="midi mode" onChange={(e) => changeMidiMode(e.target.value as MidiMode)}>
+              <option value="single">single ch</option>
+              <option value="mpe">MPE 2–8</option>
+            </select>
+          </label>
 
-        <span className="oct" title="Shift the whole voice up or down by whole octaves (−2 to +2).">
-          OCT
-          <button type="button" onClick={() => changeOctave(-1)} aria-label="octave down">−</button>
-          <span style={{ minWidth: 18, textAlign: "center" }}>{octLabel}</span>
-          <button type="button" onClick={() => changeOctave(1)} aria-label="octave up">+</button>
-        </span>
-
-        <span className="vol" title="Master output volume.">
-          VOL
-          <input type="range" min={0} max={1} step={0.01} value={volume} aria-label="volume" onChange={(e) => changeVolume(parseFloat(e.target.value))} />
-        </span>
-
-        <span className="bpm" title="Tempo for the internal BPM grid (used when TIMING = bpm; overridden by Ableton Link).">
-          BPM
-          <input type="number" min={40} max={240} step={1} value={bpm} aria-label="bpm" onChange={(e) => changeBpm(parseFloat(e.target.value))} />
-        </span>
-
-        <label className="sel" title="Timing: free (ametric) · bpm (snap onsets to the internal grid) · link (snap to Ableton Link via the mpump Link Bridge).">
-          TIMING
-          <select value={timingMode} aria-label="timing mode" onChange={(e) => changeTiming(e.target.value as TimingMode)}>
-            <option value="free">free</option>
-            <option value="bpm">bpm grid</option>
-            <option value="link">ableton link</option>
-          </select>
-          {timingMode === "link" && <span style={{ marginLeft: 6 }}>· {linkStatus}</span>}
-        </label>
-
-        <button
-          type="button"
-          className={"chip-btn" + (midiName ? " on" : "")}
-          onClick={toggleMidi}
-          aria-pressed={!!midiName}
-          title="Send the generated notes to an external MIDI synth/DAW (microtonal via pitch-bend). Click to connect the first available output."
-        >
-          MIDI {midiName ? `· ${midiName}` : "off"}
-        </button>
-
-        <label className="sel" title="MIDI mode. Single Channel: works with any synth, but a new note's pitch-bend retunes every note still ringing (overlap limitation). MPE: rotates notes across channels 2–8, each with its own bend, so overlapping microtonal notes never retune each other (needs an MPE-capable synth).">
-          MODE
-          <select value={midiMode} aria-label="midi mode" onChange={(e) => changeMidiMode(e.target.value as MidiMode)}>
-            <option value="single">single ch</option>
-            <option value="mpe">MPE 2–8</option>
-          </select>
-        </label>
-      </div>
+          <button
+            type="button"
+            className={"chip-btn" + (mbusOn ? " on" : "")}
+            onClick={toggleMbus}
+            title="Publish mraga's audio to the mbus patchbay so other m-suite tabs can subscribe (needs the bridge companion; Chrome/Firefox). Off by default, never persisted."
+          >
+            ⇄ mbus{mbusOn ? (mbusState === "connected" ? " · live" : " · searching…") : " off"}
+          </button>
+        </div>
+      </details>
     </main>
   );
 }

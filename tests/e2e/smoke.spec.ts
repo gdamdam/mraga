@@ -20,3 +20,19 @@ test("loads, imports an mdrone link, and toggles play", async ({ page }) => {
   await page.getByRole("button", { name: /STOP/ }).click();
   await expect(page.getByRole("button", { name: /PLAY/ })).toBeVisible();
 });
+
+test("selecting a taal reveals the taal meter; grammar/io disclosure", async ({ page }) => {
+  await page.goto("/");
+
+  // No taal by default → no taal meter.
+  await expect(page.getByText(/TAAL · /)).toHaveCount(0);
+
+  // RAGA / TAAL live in the (open-by-default) Grammar panel.
+  await page.getByLabel("taal").selectOption("teental");
+  await expect(page.getByText(/TAAL · teental/)).toBeVisible();
+
+  // I/O controls are behind a collapsed disclosure until opened.
+  await expect(page.getByRole("button", { name: /SHARE/ })).toBeHidden();
+  await page.getByText("I/O", { exact: true }).click();
+  await expect(page.getByRole("button", { name: /SHARE/ })).toBeVisible();
+});

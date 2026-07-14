@@ -26,6 +26,12 @@ export type MragaScene = {
   // decode so pre-1.0 links keep working (backward compatible).
   taal: string;       // taal id ("off" | teental | jhaptal | rupak | ektaal)
   gamaka: boolean;    // authored ornaments on/off
+  // Added in 0.4 — phrase-engine features. Optional; all default false on decode
+  // so pre-0.4 links (which lack them) replay their original note stream unchanged.
+  rhythmCells?: boolean; // per-phrase rhythm cell vocabulary
+  tihai?: boolean;       // cadential 3× figure landing on sam
+  vakra?: boolean;       // crooked (segment-wise) melodic direction
+  theka?: boolean;       // soft metric taal tick
 };
 
 // ---------------------------------------------------------------------------
@@ -155,6 +161,13 @@ export function decodeScene(payload: string): MragaScene | null {
     const taal = typeof raw.taal === "string" ? raw.taal : "off";
     const gamaka = raw.gamaka === true;
 
+    // 0.4 additions — default false so pre-0.4 links replay their note stream
+    // unchanged (these features gate new rng draws / melodic remaps).
+    const rhythmCells = raw.rhythmCells === true;
+    const tihai = raw.tihai === true;
+    const vakra = raw.vakra === true;
+    const theka = raw.theka === true;
+
     return {
       v: 1,
       knobs,
@@ -171,6 +184,10 @@ export function decodeScene(payload: string): MragaScene | null {
       droneLevel,
       taal,
       gamaka,
+      rhythmCells,
+      tihai,
+      vakra,
+      theka,
     };
   } catch {
     return null;

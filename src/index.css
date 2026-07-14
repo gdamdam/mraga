@@ -11,7 +11,8 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--ink); }
-.mraga { max-width: 760px; margin: 0 auto; padding: 24px; }
+.mraga { max-width: 780px; margin: 0 auto; padding: 24px; }
+
 /* Block-art wordmark in the m-family style, matching mdrone's glowing logo. */
 .title-art {
   margin: 0;
@@ -27,39 +28,130 @@ body { margin: 0; background: var(--bg); color: var(--ink); }
     0 0 8px color-mix(in srgb, var(--ember) 32%, transparent),
     0 0 16px color-mix(in srgb, var(--ember) 14%, transparent);
 }
+
 .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .chip { font-size: 13px; color: var(--muted); }
 /* A chip rendered as a clickable control (voice/timing/octave). */
 .chip-btn { background: none; border: none; color: inherit; font: inherit; cursor: pointer; padding: 0; }
 .chip-btn:hover { color: var(--ember); }
-.knobs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin: 24px 0; }
+.chip-btn.on { color: var(--ember); }
+
+/* --- Masthead: brand left, global chrome (theme + linked scene) right. --- */
+.masthead { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.brand-mark { display: flex; align-items: center; gap: 12px; }
+.masthead-meta { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: flex-end; }
+.tagline { margin-top: 6px; font-size: 12px; font-style: italic; color: var(--muted); letter-spacing: 0.3px; }
+
+/* --- Transport: the dominant control row. --- */
+.transport { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 16px 0; }
+.link-field { flex: 1 1 200px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--field); color: var(--ink); }
+.play {
+  background: var(--ember); color: var(--bg); border: 0; border-radius: 999px;
+  padding: 12px 26px; font-size: 16px; font-weight: 700; letter-spacing: 0.5px; cursor: pointer;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ember) 40%, transparent), 0 0 18px color-mix(in srgb, var(--ember) 22%, transparent);
+}
+.play:hover { filter: brightness(1.06); }
+
+/* --- Panels: etched, stacked control zones (no cards / shadows). --- */
+.panel { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 4px; }
+.panel[open] { padding-bottom: 4px; }
+.panel-head {
+  display: flex; align-items: baseline; gap: 12px;
+  padding: 8px 0 6px; margin: 0;
+}
+.panel-title {
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  font-size: 11px; font-weight: 700; letter-spacing: 3px; text-transform: uppercase;
+  color: var(--ember);
+}
+.panel-hint { letter-spacing: 0.5px; }
+/* Disclosure summaries get a caret; static section heads do not. */
+details.panel > summary.panel-head { cursor: pointer; list-style: none; }
+details.panel > summary.panel-head::-webkit-details-marker { display: none; }
+details.panel > summary.panel-head::after {
+  content: "›"; margin-left: auto; color: var(--muted);
+  transition: transform 140ms ease; transform: rotate(0deg); font-size: 15px; line-height: 1;
+}
+details.panel[open] > summary.panel-head::after { transform: rotate(90deg); }
+details.panel > summary.panel-head:hover .panel-title { filter: brightness(1.12); }
+
+/* A cluster: aligned, wrapping row of secondary controls at reduced weight. */
+.cluster { display: flex; align-items: center; gap: 18px 20px; flex-wrap: wrap; padding: 4px 0 10px; }
+
+/* --- Perform: the big zone (ladder above, knobs below). --- */
+.stage { margin-top: 8px; }
+.panel.perform .panel-head { justify-content: space-between; }
+.reroll { font-family: "SF Mono", "Menlo", "Consolas", monospace; font-size: 12px; letter-spacing: 0.5px; }
+.knobs { display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: 18px 16px; margin: 4px 0 8px; }
 .knob { text-align: center; }
 .knob input { width: 100%; accent-color: var(--ember); }
-.play { background: var(--ember); color: var(--bg); border: 0; border-radius: 999px; padding: 10px 22px; font-size: 15px; font-weight: 700; cursor: pointer; }
-.tagline { margin-top: 6px; font-size: 12px; font-style: italic; color: var(--muted); letter-spacing: 0.3px; }
-.link-field { flex: 1; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--field); color: var(--ink); }
+
 /* Dots and labels share identical column grids so they stay aligned. */
 .ladder { display: grid; align-items: end; height: 120px; padding: 16px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-.dot-cell { display: flex; justify-content: center; align-items: flex-end; }
+.dot-cell { display: flex; justify-content: center; align-items: flex-end; cursor: pointer; }
 .dot { width: 12px; border-radius: 6px; background: var(--line); transition: background 120ms, box-shadow 120ms; }
 .dot.lit { background: var(--ember); box-shadow: 0 0 12px var(--ember); }
+.dot.off { opacity: 0.25; }
+.dot.pulled { outline: 1px solid var(--ember); outline-offset: 2px; }
 .ladder-labels { display: grid; margin-top: 6px; }
 .deg-label { font-size: 11px; color: var(--muted); text-align: center; }
-/* Footer controls row: voice / octave / volume / timing. */
-.footer { gap: 20px; flex-wrap: wrap; }
+.deg-label.pulled { color: var(--ember); }
+
+/* --- Taal meter: the cycle made visible. One pip per matra, grouped by vibhag,
+   sam/tali/khali marked; the current beat glows like the lit ladder dot. --- */
+.taal-meter { margin-top: 10px; }
+.taal-meter-label {
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); margin-bottom: 6px;
+}
+.taal-strip { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.taal-vibhag { display: flex; align-items: center; gap: 8px; }
+.taal-vibhag + .taal-vibhag { padding-left: 16px; border-left: 1px solid var(--line); }
+.taal-pip {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--line); border: 1px solid transparent;
+  transition: background 120ms, box-shadow 120ms, transform 120ms;
+}
+/* tali (clap): a filled accent-tinted beat. */
+.taal-pip.tali { background: color-mix(in srgb, var(--ember) 45%, var(--line)); }
+/* khali (wave): hollow ring. */
+.taal-pip.khali { background: transparent; border-color: var(--muted); }
+/* sam: the downbeat — larger ringed pip. */
+.taal-pip.sam {
+  width: 12px; height: 12px; background: transparent;
+  border: 2px solid var(--ember);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ember) 18%, transparent);
+}
+/* the beat sounding now: lit like the ladder. */
+.taal-pip.now { background: var(--ember); border-color: var(--ember); box-shadow: 0 0 10px var(--ember); transform: scale(1.15); }
+.taal-caption { text-align: left; margin-top: 8px; }
+
+.first-run { }
+
+/* --- Small secondary controls (voice / octave / volume / bpm / timing). --- */
 .vol { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
 .vol input { accent-color: var(--ember); width: 90px; }
 .oct { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
-.oct button { background: none; border: 1px solid var(--line); border-radius: 6px; color: inherit; cursor: pointer; width: 22px; height: 22px; line-height: 1; }
+.oct button { background: none; border: 1px solid var(--line); border-radius: 6px; color: inherit; cursor: pointer; width: 26px; height: 26px; line-height: 1; }
 .oct button:hover { border-color: var(--ember); color: var(--ember); }
 .sel { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
-.sel select { font: inherit; color: var(--ink); background: var(--field); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; cursor: pointer; }
+.sel select { font: inherit; color: var(--ink); background: var(--field); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; cursor: pointer; }
 .bpm { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
-.bpm input { width: 56px; font: inherit; color: var(--ink); background: var(--field); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; }
+.bpm input { width: 56px; font: inherit; color: var(--ink); background: var(--field); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
 
-/* Conducting + raga palette on the ladder. */
-.dot-cell { cursor: pointer; }
-.dot.off { opacity: 0.25; }
-.dot.pulled { outline: 1px solid var(--ember); outline-offset: 2px; }
-.deg-label.pulled { color: var(--ember); }
-.chip-btn.on { color: var(--ember); }
+/* --- Touch / phone: bigger hit targets, knobs wrap, ladder stays visible. --- */
+@media (max-width: 480px) {
+  .mraga { padding: 16px; }
+  .knobs { grid-template-columns: repeat(auto-fit, minmax(76px, 1fr)); }
+}
+@media (pointer: coarse) {
+  .play { min-height: 44px; }
+  .chip-btn, .oct button { min-height: 40px; display: inline-flex; align-items: center; }
+  .sel select, .bpm input, .link-field { min-height: 40px; }
+  input[type="range"] { height: 40px; }
+  .dot-cell { min-height: 40px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .taal-pip, details.panel > summary.panel-head::after, .dot { transition: none; }
+}
